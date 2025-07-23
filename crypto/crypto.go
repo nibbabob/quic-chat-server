@@ -5,7 +5,7 @@ import (
 	"crypto/elliptic"
 	"crypto/rand"
 	"crypto/rsa"
-	"crypto/sha1"
+	"crypto/sha256"
 	"crypto/tls"
 	"crypto/x509"
 	"crypto/x509/pkix"
@@ -144,7 +144,7 @@ func generateMaxSecurityCertificate() error {
 	if err != nil {
 		return fmt.Errorf("failed to marshal public key: %w", err)
 	}
-	subjectKeyID := sha1.Sum(publicKeyBytes)
+	subjectKeyID := sha256.Sum256(publicKeyBytes)
 
 	// Create certificate template with enhanced security
 	template := &x509.Certificate{

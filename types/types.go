@@ -1,8 +1,7 @@
 package types
 
 import (
-	"fmt"
-	"math/rand"
+	"quic-chat-server/utils"
 	"sync"
 	"time"
 
@@ -435,7 +434,7 @@ func (s *SecurityMetrics) RecordSecurityEvent(eventType string) {
 
 func NewSecureMessage(msgType string, author string) *Message {
 	return &Message{
-		ID:        generateSecureID(),
+		ID:        utils.GenerateSecureID(),
 		Type:      msgType,
 		Timestamp: time.Now(),
 		Metadata: Metadata{
@@ -499,7 +498,7 @@ func NewAuditEntry(eventType, userID, connID, roomID string, severity string, de
 
 func NewSecurityAlert(alertType, severity, source, description string, metadata map[string]interface{}) SecurityAlert {
 	return SecurityAlert{
-		ID:          generateSecureID(),
+		ID:          utils.GenerateSecureID(),
 		Timestamp:   time.Now(),
 		AlertType:   alertType,
 		Severity:    severity,
@@ -512,11 +511,8 @@ func NewSecurityAlert(alertType, severity, source, description string, metadata 
 
 // Utility functions
 
-func generateSecureID() string {
-	// This would use crypto/rand in actual implementation
-	// Placeholder for now
-	return fmt.Sprintf("%d-%d", time.Now().UnixNano(), rand.Intn(1000000))
-}
+// generateSecureID has been removed as it was insecure.
+// All calls should now use utils.GenerateSecureID()
 
 // Security validation interfaces
 

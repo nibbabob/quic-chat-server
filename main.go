@@ -22,7 +22,6 @@ import (
 )
 
 var (
-	startTime    = time.Now()
 	serverConfig *config.Config
 	logger       = security.NewSecureLogger()
 )
@@ -193,8 +192,8 @@ func startSecureHealthServer() {
 
 	// Obfuscated health endpoint (not /health for OPSEC)
 	mux.HandleFunc(serverConfig.Monitoring.HealthEndpoint, func(w http.ResponseWriter, r *http.Request) {
-		// Verify request is from localhost only
-		if !security.IsLocalRequest(r) {
+		// Verify request is from localhost and has a valid token
+		if !security.IsLocalRequest(r) || !security.ValidateMetricsAuth(r) {
 			http.Error(w, "Not Found", http.StatusNotFound)
 			return
 		}

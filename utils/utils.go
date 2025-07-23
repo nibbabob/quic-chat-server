@@ -10,29 +10,18 @@ import (
 
 // GenerateSecureID generates a cryptographically secure ID
 func GenerateSecureID() string {
-	// Generate 16 bytes of random data
 	bytes := make([]byte, 16)
 	if _, err := rand.Read(bytes); err != nil {
-		// Fallback to timestamp-based ID if random generation fails
-		return fmt.Sprintf("%x-%d", sha256.Sum256([]byte(fmt.Sprintf("%d", time.Now().UnixNano()))), time.Now().UnixNano())
+		panic("fatal error: unable to generate secure random data")
 	}
-
-	// Add timestamp component for uniqueness
-	timestamp := time.Now().UnixNano()
-
-	// Combine random bytes with timestamp
-	combined := fmt.Sprintf("%x-%x", bytes, timestamp)
-
-	return combined
+	return hex.EncodeToString(bytes)
 }
 
 // GenerateNonce generates a cryptographic nonce
 func GenerateNonce() string {
 	bytes := make([]byte, 32) // 256-bit nonce
 	if _, err := rand.Read(bytes); err != nil {
-		// Fallback using timestamp and hash
-		hash := sha256.Sum256([]byte(fmt.Sprintf("%d-%d", time.Now().UnixNano(), time.Now().Unix())))
-		return hex.EncodeToString(hash[:])
+		panic("fatal error: unable to generate secure random data")
 	}
 	return hex.EncodeToString(bytes)
 }
@@ -45,9 +34,7 @@ func GenerateToken(length int) string {
 
 	bytes := make([]byte, length)
 	if _, err := rand.Read(bytes); err != nil {
-		// Fallback token generation
-		hash := sha256.Sum256([]byte(fmt.Sprintf("token-%d-%d", time.Now().UnixNano(), length)))
-		return hex.EncodeToString(hash[:length])
+		panic("fatal error: unable to generate secure random data")
 	}
 
 	return hex.EncodeToString(bytes)
@@ -59,9 +46,9 @@ func SecureCompare(a, b string) bool {
 		return false
 	}
 
-	result := 0
+	var result byte
 	for i := 0; i < len(a); i++ {
-		result |= int(a[i]) ^ int(b[i])
+		result |= a[i] ^ b[i]
 	}
 
 	return result == 0
@@ -130,8 +117,8 @@ func IsValidRoomID(roomID string) bool {
 }
 
 // GenerateFingerprint creates a fingerprint for a public key
-func GenerateFingerprint(publicKey string) string {
-	hash := sha256.Sum256([]byte(publicKey))
+func GenerateFingerprint(publicKey []byte) string {
+	hash := sha256.Sum256(publicKey)
 	// Return first 16 bytes as hex (128-bit fingerprint)
 	return hex.EncodeToString(hash[:16])
 }
