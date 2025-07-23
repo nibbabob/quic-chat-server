@@ -13,6 +13,7 @@ import (
 	"crypto/tls"
 	"crypto/x509"
 	"crypto/x509/pkix"
+	"encoding/binary"
 	"encoding/hex"
 	"encoding/json"
 	"encoding/pem"
@@ -877,7 +878,15 @@ func (c *SecureClient) encryptForRecipient(content string, pubKey *ecdsa.PublicK
 	ephemeralPubBytes := ephemeralPub.Bytes()
 	ciphertext := gcm.Seal(nonce, nonce, []byte(content), nil)
 
-	return hex.EncodeToString(append(ephemeralPubBytes, ciphertext...)), nil
+	// Prepend the length of the ephemeral public key as a 2-byte value
+	pubKeyLenBytes := make([]byte, 2)
+	binary.BigEndian.PutUint16(pubKeyLenBytes, uint16(len(ephemeralPubBytes)))
+
+	// Construct the final message: [pubKeyLen][pubKey][ciphertext]
+	message := append(pubKeyLenBytes, ephemeralPubBytes...)
+	message = append(message, ciphertext...)
+
+	return hex.EncodeToString(message), nil
 }
 
 func (c *SecureClient) decryptMessage(ciphertextHex string) (string, error) {
@@ -887,19 +896,22 @@ func (c *SecureClient) decryptMessage(ciphertextHex string) (string, error) {
 		return "", err
 	}
 
-	ecdhCurve := ecdh.P521()
-	// The length of a P-521 public key is 1 + 2 * ((521 + 7) / 8) for uncompressed form
-	// but the `Bytes()` method on an `ecdh.PublicKey` returns the raw x and y coordinates.
-	// For P-521, each coordinate is 66 bytes, so the total length is 132 bytes.
-	pubKeyLen := 132
+	if len(ciphertext) < 2 {
+		return "", fmt.Errorf("invalid ciphertext: too short")
+	}
 
-	if len(ciphertext) <= pubKeyLen {
-		return "", fmt.Errorf("invalid ciphertext length")
+	// Read the length of the ephemeral public key
+	pubKeyLen := int(binary.BigEndian.Uint16(ciphertext[:2]))
+	ciphertext = ciphertext[2:]
+
+	if len(ciphertext) < pubKeyLen {
+		return "", fmt.Errorf("invalid ciphertext: not enough data for public key")
 	}
 
 	ephemeralPubBytes := ciphertext[:pubKeyLen]
 	ciphertext = ciphertext[pubKeyLen:]
 
+	ecdhCurve := ecdh.P521()
 	ephemeralPub, err := ecdhCurve.NewPublicKey(ephemeralPubBytes)
 	if err != nil {
 		return "", fmt.Errorf("invalid ephemeral public key: %w", err)
