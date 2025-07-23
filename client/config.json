@@ -1,0 +1,36 @@
+{
+  "server": {
+    "port": "4433",
+    "max_connections": 50,
+    "max_rooms_per_server": 25,
+    "max_users_per_room": 8,
+    "connection_timeout_seconds": 180
+  },
+  "security": {
+    "max_idle_timeout_seconds": 120,
+    "rate_limit_messages_per_minute": 15,
+    "max_message_size_bytes": 16384,
+    "require_client_authentication": true,
+    "enable_perfect_forward_secrecy": true,
+    "max_failed_auth_attempts": 2,
+    "auth_ban_duration_minutes": 60
+  },
+  "crypto": {
+    "use_ecdsa_instead_of_rsa": true,
+    "ecdsa_curve": "P-384",
+    "key_rotation_interval_hours": 12,
+    "certificate_validity_days": 14
+  },
+  "monitoring": {
+    "health_port": "8080",
+    "log_level": "WARN",
+    "enable_security_auditing": true
+  },
+  "opsec": {
+    "enable_process_obfuscation": true,
+    "clear_environment_variables": true,
+    "enable_memory_protection": true,
+    "disable_core_dumps": true,
+    "max_daily_connections_per_ip": 25
+  }
+}
