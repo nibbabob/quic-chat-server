@@ -61,10 +61,17 @@ var (
 	secureLogger    *SecureLogger
 	memoryKeys      [][]byte // Store sensitive keys for secure wiping
 	memoryMutex     sync.Mutex
+	ipHashSalt      []byte
 )
 
 // InitializeSecurityMonitor sets up comprehensive security monitoring
 func InitializeSecurityMonitor(cfg *config.Config) {
+	var err error
+	ipHashSalt, err = hex.DecodeString(os.Getenv("IP_HASH_SALT"))
+	if err != nil || len(ipHashSalt) < 32 {
+		log.Fatal("IP_HASH_SALT environment variable must be set to a hex-encoded string of at least 32 bytes")
+	}
+
 	securityMonitor = &SecurityMonitor{
 		config:             cfg,
 		failedAuthAttempts: make(map[string]*AuthAttempt),
@@ -246,11 +253,7 @@ func ValidateMessage(content []byte, senderID string, remoteAddr string) error {
 
 // HashIPAddress creates a non-reversible hash of an IP address for logging
 func HashIPAddress(ip string) string {
-	salt := os.Getenv("IP_HASH_SALT")
-	if salt == "" {
-		salt = "default_insecure_salt" // Fallback, should be configured
-	}
-	hash := sha256.Sum256([]byte(ip + salt))
+	hash := sha256.Sum256(append([]byte(ip), ipHashSalt...))
 	return hex.EncodeToString(hash[:16]) // Using more of the hash
 }
 

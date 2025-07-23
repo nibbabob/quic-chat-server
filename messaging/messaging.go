@@ -17,12 +17,15 @@ import (
 )
 
 var (
-	server          *types.Server
-	serverConfig    *config.Config
-	messageSequence uint64
-	sequenceMutex   sync.Mutex
-	logger          = security.NewSecureLogger()
-	shutdownChan    = make(chan struct{})
+	server            *types.Server
+	serverConfig      *config.Config
+	messageSequence   uint64
+	sequenceMutex     sync.Mutex
+	logger            = security.NewSecureLogger()
+	shutdownChan      = make(chan struct{})
+	userSequence      = make(map[string]uint64)
+	userSequenceMutex sync.Mutex
+	hmacSecret        = []byte("a-very-secret-key-that-should-be-loaded-from-a-secure-location") // TODO: Load from secure config
 )
 
 // InitializeServer initializes the messaging subsystem
@@ -450,16 +453,11 @@ func createPersonalMessage(originalMsg types.Message, encryptedContent string, _
 // Utility functions
 
 func generateSecureMessageID() string {
-	// Generate a cryptographically secure message ID
-	return fmt.Sprintf("%d-%s", time.Now().UnixNano(), generateSecureRandomString(16))
-}
-
-func generateSecureRandomString(length int) string {
-	b := make([]byte, length)
-	if _, err := rand.Read(b); err != nil {
-		return ""
+	bytes := make([]byte, 16)
+	if _, err := rand.Read(bytes); err != nil {
+		panic("failed to generate secure message ID: " + err.Error())
 	}
-	return hex.EncodeToString(b)
+	return hex.EncodeToString(bytes)
 }
 
 func calculateContentSize(msg *types.Message) int {
@@ -478,25 +476,26 @@ func calculateContentSize(msg *types.Message) int {
 	return size
 }
 
-func isValidSequence(sequence uint64, _ string) bool {
-	// In a real implementation, this would check against stored sequence numbers
-	// for each user to prevent replay attacks
-	// For now, just ensure sequence is reasonable
-	return sequence > 0 && sequence <= messageSequence+1000
+func isValidSequence(sequence uint64, author string) bool {
+	userSequenceMutex.Lock()
+	defer userSequenceMutex.Unlock()
+	lastSequence, ok := userSequence[author]
+	if !ok {
+		userSequence[author] = sequence
+		return true
+	}
+	if sequence > lastSequence {
+		userSequence[author] = sequence
+		return true
+	}
+	return false
 }
 
 func validateMessageHMAC(msg *types.Message) bool {
 	if msg.HMAC == "" {
 		return true // No HMAC to validate
 	}
-
-	// In a real implementation, this would validate the HMAC using a shared secret
-	// For now, just check that it's a valid hex string
-	if _, err := hex.DecodeString(msg.HMAC); err != nil {
-		return false
-	}
-
-	return len(msg.HMAC) == 64 // SHA-256 HMAC is 64 hex characters
+	return ValidateMessageIntegrity(msg, hmacSecret)
 }
 
 // GenerateMessageHMAC creates HMAC-SHA256 of message content for integrity verification
@@ -525,7 +524,7 @@ func ValidateMessageIntegrity(msg *types.Message, secret []byte) bool {
 	}
 
 	expectedHMAC := generateMessageHMAC(msg, secret)
-	return msg.HMAC == expectedHMAC
+	return hmac.Equal([]byte(msg.HMAC), []byte(expectedHMAC))
 }
 
 // SetServer sets the server instance for the messaging subsystem

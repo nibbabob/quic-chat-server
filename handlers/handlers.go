@@ -584,8 +584,15 @@ func notifyKeyRotation(roomID, excludeConnID, userID, newPublicKey string) {
 
 func isConnectionClosed(err error) bool {
 	// Check for common connection closed errors
-	errStr := err.Error()
-	return strings.Contains(errStr, "connection closed") ||
-		strings.Contains(errStr, "use of closed") ||
-		strings.Contains(errStr, "EOF")
+	if err == nil {
+		return false
+	}
+	if strings.Contains(err.Error(), "connection closed") {
+		return true
+	}
+	// Check for specific quic-go error
+	if qErr, ok := err.(*quic.ApplicationError); ok && qErr.ErrorCode == 0 {
+		return true
+	}
+	return false
 }

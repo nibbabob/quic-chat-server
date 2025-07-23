@@ -177,21 +177,19 @@ func initializeSecureSession() error {
 	if err != nil {
 		return fmt.Errorf("failed to read client name: %w", err)
 	}
-	client.clientName = sanitizeInput(strings.TrimSpace(name))
+	client.clientName, err = sanitizeInput(strings.TrimSpace(name))
+	if err != nil {
+		return err
+	}
 
 	fmt.Printf("%s🏠 Enter secure room identifier: %s", colorCyan, colorReset)
 	room, err := reader.ReadString('\n')
 	if err != nil {
 		return fmt.Errorf("failed to read room name: %w", err)
 	}
-	client.roomName = sanitizeInput(strings.TrimSpace(room))
-
-	// Validate inputs
-	if len(client.clientName) < 3 || len(client.clientName) > 50 {
-		return fmt.Errorf("client name must be 3-50 characters")
-	}
-	if len(client.roomName) < 3 || len(client.roomName) > 100 {
-		return fmt.Errorf("room name must be 3-100 characters")
+	client.roomName, err = sanitizeInput(strings.TrimSpace(room))
+	if err != nil {
+		return err
 	}
 
 	// Generate ephemeral cryptographic keys
@@ -1007,8 +1005,7 @@ func (c *SecureClient) validateIncomingMessage(msg Message) bool {
 func generateSecureID() string {
 	bytes := make([]byte, 16)
 	if _, err := rand.Read(bytes); err != nil {
-		// Fallback to timestamp-based ID
-		return fmt.Sprintf("%x", time.Now().UnixNano())
+		panic("failed to generate secure ID: " + err.Error())
 	}
 	return hex.EncodeToString(bytes)
 }
@@ -1028,15 +1025,14 @@ func generateKeyFingerprint(pubKeyBytes []byte) string {
 	return hex.EncodeToString(hash[:16]) // 128-bit fingerprint
 }
 
-func sanitizeInput(input string) string {
-	// A simple validator for user and room names
-	if len(input) > 100 {
-		input = input[:100]
+func sanitizeInput(input string) (string, error) {
+	if len(input) < 3 || len(input) > 50 {
+		return "", fmt.Errorf("input must be between 3 and 50 characters")
 	}
-	return strings.Map(func(r rune) rune {
-		if (r >= 'a' && r <= 'z') || (r >= 'A' && r <= 'Z') || (r >= '0' && r <= '9') || r == '_' || r == '-' {
-			return r
+	for _, r := range input {
+		if !((r >= 'a' && r <= 'z') || (r >= 'A' && r <= 'Z') || (r >= '0' && r <= '9') || r == '_' || r == '-') {
+			return "", fmt.Errorf("input contains invalid characters")
 		}
-		return -1
-	}, input)
+	}
+	return input, nil
 }
