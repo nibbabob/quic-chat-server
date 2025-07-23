@@ -1,4 +1,4 @@
-package main
+package handlers
 
 import (
 	"context"
@@ -6,13 +6,17 @@ import (
 	"fmt"
 	"io"
 	"log"
+	"quic-chat-server/messaging"
 	"quic-chat-server/types"
+	"quic-chat-server/utils"
 	"time"
 
 	"github.com/quic-go/quic-go"
 )
 
-func handleConnection(conn *quic.Conn, connID string) {
+var server *types.Server
+
+func HandleConnection(conn *quic.Conn, connID string) {
 	defer func() {
 		server.Mutex.Lock()
 		client, exists := server.Connections[connID]
@@ -24,7 +28,7 @@ func handleConnection(conn *quic.Conn, connID string) {
 					room.Mutex.Unlock()
 
 					leaveMsg := types.Message{
-						ID:   generateSecureID(),
+						ID:   utils.GenerateSecureID(),
 						Type: "leave",
 						Metadata: types.Metadata{
 							Author:        client.UserID,
@@ -32,7 +36,7 @@ func handleConnection(conn *quic.Conn, connID string) {
 							ChannelID:     client.RoomID,
 						},
 					}
-					broadcastSimpleMessageToRoom(client.RoomID, leaveMsg, connID)
+					messaging.BroadcastSimpleMessageToRoom(client.RoomID, leaveMsg, connID)
 				}
 			}
 			delete(server.Connections, connID)
@@ -108,7 +112,7 @@ func handleJoin(stream *quic.Stream, conn *quic.Conn, connID string, msg types.M
 	log.Printf("👤 User %s (%s) joined room %s", msg.Metadata.Author, connID, msg.Metadata.ChannelID)
 
 	response := types.Message{
-		ID:        generateSecureID(),
+		ID:        utils.GenerateSecureID(),
 		Type:      "join_ack",
 		Timestamp: time.Now(),
 		Metadata: types.Metadata{
@@ -122,7 +126,7 @@ func handleJoin(stream *quic.Stream, conn *quic.Conn, connID string, msg types.M
 	}
 
 	joinMsg := types.Message{
-		ID:        generateSecureID(),
+		ID:        utils.GenerateSecureID(),
 		Type:      "user_joined",
 		Timestamp: time.Now(),
 		Metadata: types.Metadata{
@@ -132,7 +136,7 @@ func handleJoin(stream *quic.Stream, conn *quic.Conn, connID string, msg types.M
 			PublicKey:     msg.Metadata.PublicKey,
 		},
 	}
-	broadcastSimpleMessageToRoom(msg.Metadata.ChannelID, joinMsg, connID)
+	messaging.BroadcastSimpleMessageToRoom(msg.Metadata.ChannelID, joinMsg, connID)
 }
 
 // REWRITTEN: handleMessage now calls the smart broadcast function
@@ -148,12 +152,12 @@ func handleMessage(stream *quic.Stream, connID string, msg types.Message) {
 
 	log.Printf("📨 Encrypted message bundle from %s in room %s", msg.Metadata.Author, msg.Metadata.ChannelID)
 	msg.Timestamp = time.Now()
-	msg.ID = generateSecureID()
+	msg.ID = utils.GenerateSecureID()
 
-	broadcastEncryptedMessageToRoom(client.RoomID, msg)
+	messaging.BroadcastEncryptedMessageToRoom(client.RoomID, msg)
 
 	ack := types.Message{
-		ID:   generateSecureID(),
+		ID:   utils.GenerateSecureID(),
 		Type: "message_ack",
 		Metadata: types.Metadata{
 			SingleContent: "Message bundle received by server.",
