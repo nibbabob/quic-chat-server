@@ -57,6 +57,8 @@ type MonitoringConfig struct {
 	AuditLogPath            string `json:"audit_log_path"`
 	MaxLogFileSizeMB        int    `json:"max_log_file_size_mb"`
 	LogRotationIntervalDays int    `json:"log_rotation_interval_days"`
+	HealthEndpoint          string `json:"health_endpoint"`
+	MetricsEndpoint         string `json:"metrics_endpoint"`
 }
 
 type OPSECConfig struct {
@@ -138,6 +140,8 @@ func getSecureDefaults() *Config {
 			AuditLogPath:            "/tmp/audit.log",
 			MaxLogFileSizeMB:        10, // Small log files
 			LogRotationIntervalDays: 1,  // Daily rotation
+			HealthEndpoint:          "/sys/status",
+			MetricsEndpoint:         "/sys/metrics",
 		},
 		OPSEC: OPSECConfig{
 			EnableProcessObfuscation: true,

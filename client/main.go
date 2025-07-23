@@ -3,10 +3,12 @@ package main
 import (
 	"bufio"
 	"context"
+	"crypto/aes"
+	"crypto/cipher"
+	"crypto/ecdh"
 	"crypto/ecdsa"
 	"crypto/elliptic"
 	"crypto/rand"
-	"crypto/rsa"
 	"crypto/sha256"
 	"crypto/tls"
 	"crypto/x509"
@@ -70,8 +72,8 @@ type SecureClient struct {
 	connection       *quic.Conn
 	clientName       string
 	roomName         string
-	privateKey       interface{} // Support both RSA and ECDSA
-	publicKeys       map[string]interface{}
+	privateKey       *ecdsa.PrivateKey
+	publicKeys       map[string]*ecdsa.PublicKey
 	keysMutex        sync.RWMutex
 	authenticated    bool
 	authChallenge    string
@@ -110,7 +112,7 @@ var client *SecureClient
 func main() {
 	// Initialize secure client
 	client = &SecureClient{
-		publicKeys:       make(map[string]interface{}),
+		publicKeys:       make(map[string]*ecdsa.PublicKey),
 		maxErrors:        5,
 		lastActivity:     time.Now(),
 		connectionSecure: false,
@@ -204,8 +206,8 @@ func initializeSecureSession() error {
 }
 
 func generateEphemeralKeys() error {
-	// Use ECDSA P-384 for better security/performance ratio
-	privateKey, err := ecdsa.GenerateKey(elliptic.P384(), rand.Reader)
+	// Use ECDSA P-521 for maximum security
+	privateKey, err := ecdsa.GenerateKey(elliptic.P521(), rand.Reader)
 	if err != nil {
 		return fmt.Errorf("failed to generate ECDSA key: %w", err)
 	}
@@ -219,7 +221,7 @@ func generateEphemeralKeys() error {
 	}
 	client.sessionKey = sessionKey
 
-	fmt.Printf("%s🔐 Generated ECDSA P-384 key pair + session key%s\n", colorGreen, colorReset)
+	fmt.Printf("%s🔐 Generated ECDSA P-521 key pair + session key%s\n", colorGreen, colorReset)
 	return nil
 }
 
@@ -234,11 +236,10 @@ func connectToSecureServer() error {
 
 	// Maximum security TLS configuration
 	tlsConf := &tls.Config{
-		// For development/testing - in production, implement proper cert validation
-		InsecureSkipVerify: true,
-		NextProtos:         []string{"secure-messaging-v1"},
-		MinVersion:         tls.VersionTLS13,
-		MaxVersion:         tls.VersionTLS13,
+		RootCAs:    getRootCAs(),
+		NextProtos: []string{"secure-messaging-v1"},
+		MinVersion: tls.VersionTLS13,
+		MaxVersion: tls.VersionTLS13,
 		CipherSuites: []uint16{
 			tls.TLS_CHACHA20_POLY1305_SHA256,
 			tls.TLS_AES_256_GCM_SHA384,
@@ -278,10 +279,27 @@ func connectToSecureServer() error {
 	return nil
 }
 
+func getRootCAs() *x509.CertPool {
+	// In a real application, you would load the server's root CA certificate
+	// from a secure location. For this example, we'll use the system's root CAs.
+	rootCAs, _ := x509.SystemCertPool()
+	if rootCAs == nil {
+		rootCAs = x509.NewCertPool()
+	}
+
+	// Add your server's certificate to the pool if it's self-signed
+	// certPEM, err := os.ReadFile("path/to/your/cert.pem")
+	// if err == nil {
+	// 	rootCAs.AppendCertsFromPEM(certPEM)
+	// }
+
+	return rootCAs
+}
+
 // generateClientCertificate creates a temporary client certificate for mutual TLS
 func generateClientCertificate() (*tls.Certificate, error) {
 	// Generate a temporary private key for the client certificate
-	certPrivKey, err := ecdsa.GenerateKey(elliptic.P384(), rand.Reader)
+	certPrivKey, err := ecdsa.GenerateKey(elliptic.P521(), rand.Reader)
 	if err != nil {
 		return nil, fmt.Errorf("failed to generate certificate private key: %w", err)
 	}
@@ -290,13 +308,8 @@ func generateClientCertificate() (*tls.Certificate, error) {
 	template := x509.Certificate{
 		SerialNumber: big.NewInt(1),
 		Subject: pkix.Name{
-			Organization:  []string{"Secure Client"},
-			Country:       []string{"XX"},
-			Province:      []string{""},
-			Locality:      []string{""},
-			StreetAddress: []string{""},
-			PostalCode:    []string{""},
-			CommonName:    client.clientName,
+			Organization: []string{"Secure Client"},
+			CommonName:   client.clientName,
 		},
 		NotBefore:             time.Now().Add(-5 * time.Minute),
 		NotAfter:              time.Now().Add(24 * time.Hour), // Short-lived
@@ -330,7 +343,7 @@ func joinRoomSecurely() error {
 	}
 
 	// Marshal public key
-	pubKeyBytes, err := x509.MarshalPKIXPublicKey(&client.privateKey.(*ecdsa.PrivateKey).PublicKey)
+	pubKeyBytes, err := x509.MarshalPKIXPublicKey(&client.privateKey.PublicKey)
 	if err != nil {
 		return fmt.Errorf("failed to marshal public key: %w", err)
 	}
@@ -406,7 +419,7 @@ func (c *SecureClient) handleAuthenticationChallenge() {
 	challengeBytes, _ := hex.DecodeString(c.authChallenge)
 	hash := sha256.Sum256(challengeBytes)
 
-	signature, err := ecdsa.SignASN1(rand.Reader, c.privateKey.(*ecdsa.PrivateKey), hash[:])
+	signature, err := ecdsa.SignASN1(rand.Reader, c.privateKey, hash[:])
 	if err != nil {
 		log.Printf("%s❌ Failed to sign authentication challenge: %v%s", colorRed, err, colorReset)
 		return
@@ -477,10 +490,7 @@ func (c *SecureClient) readSecureInput(inputChan chan<- string) {
 			c.emergencyShutdown()
 			return
 		default:
-			// Filter potentially dangerous input
-			if r >= 32 && r <= 126 {
-				c.currentInput = append(c.currentInput, r)
-			}
+			c.currentInput = append(c.currentInput, r)
 		}
 		c.redrawSecureLine()
 		c.currentInputMutex.Unlock()
@@ -645,12 +655,12 @@ func (c *SecureClient) sendEncryptedMessage(content string) error {
 	encryptedContents := make(map[string]string)
 
 	c.keysMutex.RLock()
-	allRecipients := make(map[string]interface{})
+	allRecipients := make(map[string]*ecdsa.PublicKey)
 	for name, pubKey := range c.publicKeys {
 		allRecipients[name] = pubKey
 	}
 	// Add self to recipients
-	allRecipients[c.clientName] = &c.privateKey.(*ecdsa.PrivateKey).PublicKey
+	allRecipients[c.clientName] = &c.privateKey.PublicKey
 	c.keysMutex.RUnlock()
 
 	// Encrypt for each recipient
@@ -709,7 +719,7 @@ func (c *SecureClient) rotateKeys() error {
 	}
 
 	// Notify server of key rotation
-	pubKeyBytes, err := x509.MarshalPKIXPublicKey(&c.privateKey.(*ecdsa.PrivateKey).PublicKey)
+	pubKeyBytes, err := x509.MarshalPKIXPublicKey(&c.privateKey.PublicKey)
 	if err != nil {
 		return fmt.Errorf("failed to marshal new public key: %w", err)
 	}
@@ -811,7 +821,7 @@ func (c *SecureClient) clearSensitiveData() {
 
 	// Clear public keys
 	c.keysMutex.Lock()
-	c.publicKeys = make(map[string]interface{})
+	c.publicKeys = make(map[string]*ecdsa.PublicKey)
 	c.keysMutex.Unlock()
 
 	// Clear authentication data
@@ -825,69 +835,108 @@ func (c *SecureClient) clearSensitiveData() {
 
 // Utility functions
 
-func (c *SecureClient) encryptForRecipient(content string, pubKey interface{}) (string, error) {
-	switch key := pubKey.(type) {
-	case *rsa.PublicKey:
-		ciphertext, err := rsa.EncryptPKCS1v15(rand.Reader, key, []byte(content))
-		if err != nil {
-			return "", err
-		}
-		return hex.EncodeToString(ciphertext), nil
-	case *ecdsa.PublicKey:
-		// For ECDSA, we use a hybrid approach with AES-GCM
-		return c.encryptWithECDSA(content, key)
-	default:
-		return "", fmt.Errorf("unsupported key type")
+func (c *SecureClient) encryptForRecipient(content string, pubKey *ecdsa.PublicKey) (string, error) {
+	// ECIES encryption
+	pubKeyBytes, err := x509.MarshalPKIXPublicKey(pubKey)
+	if err != nil {
+		return "", fmt.Errorf("failed to marshal public key: %w", err)
 	}
-}
 
-func (c *SecureClient) encryptWithECDSA(content string, pubKey *ecdsa.PublicKey) (string, error) {
-	// Generate ephemeral key for ECDH
-	ephemeralKey, err := ecdsa.GenerateKey(pubKey.Curve, rand.Reader)
+	ecdhCurve, err := ecdh.P521().NewPublicKey(pubKeyBytes)
+	if err != nil {
+		return "", err
+	}
+	ephemeralPriv, err := ecdh.P521().GenerateKey(rand.Reader)
+	if err != nil {
+		return "", err
+	}
+	ephemeralPub := ephemeralPriv.PublicKey()
+
+	sharedSecret, err := ephemeralPriv.ECDH(ecdhCurve)
+	if err != nil {
+		return "", fmt.Errorf("ECDH key exchange failed: %w", err)
+	}
+
+	hash := sha256.Sum256(sharedSecret)
+
+	block, err := aes.NewCipher(hash[:])
 	if err != nil {
 		return "", err
 	}
 
-	// Perform ECDH key exchange
-	sharedX, _ := pubKey.Curve.ScalarMult(pubKey.X, pubKey.Y, ephemeralKey.D.Bytes())
-	sharedSecret := sharedX.Bytes()
+	gcm, err := cipher.NewGCM(block)
+	if err != nil {
+		return "", err
+	}
 
-	// Derive encryption key using SHA-256
-	encKeyHash := sha256.Sum256(sharedSecret)
-	_ = encKeyHash // Will be used for actual AES-GCM encryption in production
+	nonce := make([]byte, gcm.NonceSize())
+	if _, err := io.ReadFull(rand.Reader, nonce); err != nil {
+		return "", err
+	}
 
-	// Simplified implementation - in production use proper ECIES with AES-GCM
-	// For now, return hex-encoded content as placeholder
-	return hex.EncodeToString([]byte(content)), nil
+	ephemeralPubBytes := ephemeralPub.Bytes()
+	ciphertext := gcm.Seal(nonce, nonce, []byte(content), nil)
+
+	return hex.EncodeToString(append(ephemeralPubBytes, ciphertext...)), nil
 }
 
 func (c *SecureClient) decryptMessage(ciphertextHex string) (string, error) {
-	switch key := c.privateKey.(type) {
-	case *rsa.PrivateKey:
-		ciphertext, err := hex.DecodeString(ciphertextHex)
-		if err != nil {
-			return "", fmt.Errorf("failed to decode hex: %w", err)
-		}
-		plaintext, err := rsa.DecryptPKCS1v15(rand.Reader, key, ciphertext)
-		if err != nil {
-			return "", fmt.Errorf("RSA decryption failed: %w", err)
-		}
-		return string(plaintext), nil
-	case *ecdsa.PrivateKey:
-		// For ECDSA, implement the corresponding decryption
-		return c.decryptWithECDSA(ciphertextHex, key)
-	default:
-		return "", fmt.Errorf("unsupported private key type")
-	}
-}
-
-func (c *SecureClient) decryptWithECDSA(ciphertextHex string, _ *ecdsa.PrivateKey) (string, error) {
-	// Simplified implementation - in production use proper ECIES
-	decoded, err := hex.DecodeString(ciphertextHex)
+	// ECIES decryption
+	ciphertext, err := hex.DecodeString(ciphertextHex)
 	if err != nil {
 		return "", err
 	}
-	return string(decoded), nil // Placeholder
+
+	ecdhCurve := ecdh.P521()
+
+	pubKeyBytes, err := x509.MarshalPKIXPublicKey(&c.privateKey.PublicKey)
+	if err != nil {
+		return "", fmt.Errorf("failed to marshal public key: %w", err)
+	}
+
+	pubKeyLen := len(pubKeyBytes)
+	ephemeralPubBytes := ciphertext[:pubKeyLen]
+	ciphertext = ciphertext[pubKeyLen:]
+
+	ephemeralPub, err := ecdhCurve.NewPublicKey(ephemeralPubBytes)
+	if err != nil {
+		return "", fmt.Errorf("invalid ephemeral public key: %w", err)
+	}
+
+	ecdhPriv, err := c.privateKey.ECDH()
+	if err != nil {
+		return "", fmt.Errorf("failed to get ECDH private key: %w", err)
+	}
+
+	sharedSecret, err := ecdhPriv.ECDH(ephemeralPub)
+	if err != nil {
+		return "", fmt.Errorf("ECDH key exchange failed: %w", err)
+	}
+
+	hash := sha256.Sum256(sharedSecret)
+
+	block, err := aes.NewCipher(hash[:])
+	if err != nil {
+		return "", err
+	}
+
+	gcm, err := cipher.NewGCM(block)
+	if err != nil {
+		return "", err
+	}
+
+	nonceSize := gcm.NonceSize()
+	if len(ciphertext) < nonceSize {
+		return "", fmt.Errorf("invalid ciphertext")
+	}
+
+	nonce, ciphertext := ciphertext[:nonceSize], ciphertext[nonceSize:]
+	plaintext, err := gcm.Open(nil, nonce, ciphertext, nil)
+	if err != nil {
+		return "", err
+	}
+
+	return string(plaintext), nil
 }
 
 func (c *SecureClient) processExistingUsers(users map[string]string) {
@@ -916,8 +965,14 @@ func (c *SecureClient) storePublicKey(name, keyStr string) {
 		return
 	}
 
+	ecdsaPubKey, ok := pub.(*ecdsa.PublicKey)
+	if !ok {
+		log.Printf("%s❌ Public key for %s is not an ECDSA key%s", colorRed, name, colorReset)
+		return
+	}
+
 	c.keysMutex.Lock()
-	c.publicKeys[name] = pub
+	c.publicKeys[name] = ecdsaPubKey
 	c.keysMutex.Unlock()
 
 	fmt.Printf("\r%s%s🔑 Synced key for user '%s'%s\n", clearLine, colorGreen, name, colorReset)
@@ -971,12 +1026,14 @@ func generateKeyFingerprint(pubKeyBytes []byte) string {
 }
 
 func sanitizeInput(input string) string {
-	// Remove potentially dangerous characters
-	result := ""
-	for _, r := range input {
-		if (r >= 'a' && r <= 'z') || (r >= 'A' && r <= 'Z') || (r >= '0' && r <= '9') || r == '_' || r == '-' {
-			result += string(r)
-		}
+	// A simple validator for user and room names
+	if len(input) > 100 {
+		input = input[:100]
 	}
-	return result
+	return strings.Map(func(r rune) rune {
+		if (r >= 'a' && r <= 'z') || (r >= 'A' && r <= 'Z') || (r >= '0' && r <= '9') || r == '_' || r == '-' {
+			return r
+		}
+		return -1
+	}, input)
 }

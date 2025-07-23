@@ -89,10 +89,7 @@ func InitializeSecurityMonitor(cfg *config.Config) {
 func InitializeMemoryProtection() {
 	memoryKeys = make([][]byte, 0)
 
-	// Note: Memory locking is platform-specific and may not be available on all systems
-	// In production, implement platform-specific memory protection
-
-	log.Println("🔒 Memory protection activated")
+	log.Println("🔒 Memory protection activated. Note: True memory wiping in Go is complex and not guaranteed due to runtime behavior.")
 }
 
 // NewSecureLogger creates a security-focused logger
@@ -249,8 +246,12 @@ func ValidateMessage(content []byte, senderID string, remoteAddr string) error {
 
 // HashIPAddress creates a non-reversible hash of an IP address for logging
 func HashIPAddress(ip string) string {
-	hash := sha256.Sum256([]byte(ip + "secure_salt_2024"))
-	return hex.EncodeToString(hash[:8]) // First 8 bytes for privacy
+	salt := os.Getenv("IP_HASH_SALT")
+	if salt == "" {
+		salt = "default_insecure_salt" // Fallback, should be configured
+	}
+	hash := sha256.Sum256([]byte(ip + salt))
+	return hex.EncodeToString(hash[:16]) // Using more of the hash
 }
 
 // IsLocalRequest validates that a request comes from localhost
@@ -527,6 +528,7 @@ func detectSuspiciousUserAgent(userAgent string) bool {
 		"bot", "crawler", "spider", "scraper",
 		"scanner", "curl", "wget", "python",
 		"go-http-client", "nikto", "sqlmap",
+		"masscan", "nmap", "zgrab",
 	}
 
 	for _, pattern := range suspiciousUAs {
@@ -610,5 +612,26 @@ func GetSecurityMetrics() map[string]interface{} {
 		"memory_protection":    "enabled",
 		"core_dumps":           "disabled",
 		"last_cleanup":         time.Now().Format(time.RFC3339),
+	}
+}
+
+// SetProcessName attempts to set the process name for obfuscation
+func SetProcessName(name string) {
+	// This is highly OS-dependent and may not work on all systems.
+	// No-op for now, but in a real-world scenario, you'd use OS-specific calls.
+	log.Printf("Process name obfuscation to '%s' is not implemented for this OS.", name)
+}
+
+// ClearEnvVars removes potentially sensitive environment variables
+func ClearEnvVars() {
+	// A more robust implementation would whitelist allowed variables.
+	// This is a basic example.
+	sensitiveEnvVars := []string{
+		"PWD", "OLDPWD", "USER", "LOGNAME", "HOME",
+		"SHELL", "TERM", "SSH_CLIENT", "SSH_CONNECTION",
+		"LS_COLORS", "HISTFILE", "PS1",
+	}
+	for _, envVar := range sensitiveEnvVars {
+		os.Unsetenv(envVar)
 	}
 }

@@ -4,6 +4,7 @@ import (
 	"context"
 	"crypto/rand"
 	"encoding/hex"
+	"fmt"
 	"log"
 	"net/http"
 	"os"
@@ -69,18 +70,13 @@ func initializeSecureEnvironment() {
 	}
 
 	// Set process name obfuscation (operational security)
-	// This helps hide the process in system monitoring
-	if len(os.Args) > 0 {
-		os.Args[0] = "systemd-resolved" // Disguise as common system service
+	if serverConfig.OPSEC.EnableProcessObfuscation {
+		security.SetProcessName("kthreadd") // Disguise as a common kernel thread
 	}
 
 	// Clear environment variables that might leak information
-	sensitiveEnvVars := []string{
-		"PWD", "OLDPWD", "USER", "LOGNAME", "HOME",
-		"SHELL", "TERM", "SSH_CLIENT", "SSH_CONNECTION",
-	}
-	for _, envVar := range sensitiveEnvVars {
-		os.Unsetenv(envVar)
+	if serverConfig.OPSEC.ClearEnvironmentVars {
+		security.ClearEnvVars()
 	}
 }
 
@@ -173,7 +169,12 @@ func startSecureServer() {
 		}
 
 		// Generate secure connection ID
-		connID := generateSecureConnectionID()
+		connID, err := generateSecureConnectionID()
+		if err != nil {
+			logger.Error("Failed to generate secure connection ID", map[string]interface{}{"error": err})
+			conn.CloseWithError(quic.ApplicationErrorCode(500), "internal_server_error")
+			continue
+		}
 
 		// Log connection with minimal information (OPSEC)
 		logger.Info("🔗 Secure connection established", map[string]interface{}{
@@ -191,7 +192,7 @@ func startSecureHealthServer() {
 	mux := http.NewServeMux()
 
 	// Obfuscated health endpoint (not /health for OPSEC)
-	mux.HandleFunc("/sys/status", func(w http.ResponseWriter, r *http.Request) {
+	mux.HandleFunc(serverConfig.Monitoring.HealthEndpoint, func(w http.ResponseWriter, r *http.Request) {
 		// Verify request is from localhost only
 		if !security.IsLocalRequest(r) {
 			http.Error(w, "Not Found", http.StatusNotFound)
@@ -205,7 +206,7 @@ func startSecureHealthServer() {
 	})
 
 	// Metrics endpoint with authentication
-	mux.HandleFunc("/sys/metrics", func(w http.ResponseWriter, r *http.Request) {
+	mux.HandleFunc(serverConfig.Monitoring.MetricsEndpoint, func(w http.ResponseWriter, r *http.Request) {
 		if !security.IsLocalRequest(r) || !security.ValidateMetricsAuth(r) {
 			http.Error(w, "Not Found", http.StatusNotFound)
 			return
@@ -235,10 +236,10 @@ func startSecureHealthServer() {
 	}
 }
 
-func generateSecureConnectionID() string {
+func generateSecureConnectionID() (string, error) {
 	bytes := make([]byte, 32) // 256-bit connection ID
 	if _, err := rand.Read(bytes); err != nil {
-		logger.Fatal("Failed to generate secure connection ID", map[string]interface{}{"error": err})
+		return "", fmt.Errorf("failed to generate secure connection ID: %w", err)
 	}
-	return hex.EncodeToString(bytes)
+	return hex.EncodeToString(bytes), nil
 }

@@ -5,6 +5,7 @@ import (
 	"crypto/elliptic"
 	"crypto/rand"
 	"crypto/rsa"
+	"crypto/sha1"
 	"crypto/tls"
 	"crypto/x509"
 	"crypto/x509/pkix"
@@ -139,17 +140,20 @@ func generateMaxSecurityCertificate() error {
 		security.RegisterSensitiveMemory(keyBytes)
 	}
 
+	publicKeyBytes, err := x509.MarshalPKIXPublicKey(getPublicKey(privateKey))
+	if err != nil {
+		return fmt.Errorf("failed to marshal public key: %w", err)
+	}
+	subjectKeyID := sha1.Sum(publicKeyBytes)
+
 	// Create certificate template with enhanced security
 	template := &x509.Certificate{
 		SerialNumber: generateSecureSerialNumber(),
 
 		Subject: pkix.Name{
-			Organization:       []string{"Secure Communications"},
-			OrganizationalUnit: []string{"Whistleblower Protection"},
+			Organization:       []string{"Anonymous"},
+			OrganizationalUnit: []string{"Secure Communications"},
 			Country:            []string{"XX"}, // No specific country for anonymity
-			Province:           []string{""},
-			Locality:           []string{""},
-			CommonName:         "secure-messaging.local",
 		},
 
 		// Certificate validity period
@@ -173,18 +177,14 @@ func generateMaxSecurityCertificate() error {
 		},
 		DNSNames: []string{
 			"localhost",
-			"secure-messaging.local",
 		},
 
 		// Certificate constraints
 		BasicConstraintsValid: true,
 		IsCA:                  false,
-		MaxPathLen:            0,
-		MaxPathLenZero:        true,
 
 		// Enhanced security extensions
-		AuthorityKeyId: generateAuthorityKeyID(),
-		SubjectKeyId:   generateSubjectKeyID(privateKey),
+		SubjectKeyId: subjectKeyID[:],
 	}
 
 	// Add certificate policies for whistleblower protection
@@ -275,14 +275,12 @@ func generateECDSAKey(curveName string) (*ecdsa.PrivateKey, error) {
 	var curve elliptic.Curve
 
 	switch curveName {
-	case "P-256":
-		curve = elliptic.P256()
-	case "P-384":
-		curve = elliptic.P384()
 	case "P-521":
 		curve = elliptic.P521()
+	case "P-384":
+		curve = elliptic.P384()
 	default:
-		curve = elliptic.P384() // Default to P-384 for good security/performance balance
+		curve = elliptic.P521() // Default to P-521 for maximum security
 	}
 
 	return ecdsa.GenerateKey(curve, rand.Reader)
@@ -296,34 +294,6 @@ func generateSecureSerialNumber() *big.Int {
 		log.Fatalf("Failed to generate serial number: %v", err)
 	}
 	return serialNumber
-}
-
-func generateAuthorityKeyID() []byte {
-	id := make([]byte, 20)
-	rand.Read(id)
-	return id
-}
-
-func generateSubjectKeyID(privateKey interface{}) []byte {
-	publicKey := getPublicKey(privateKey)
-
-	// Generate subject key ID based on public key
-	switch pub := publicKey.(type) {
-	case *rsa.PublicKey:
-		pubKeyBytes, _ := x509.MarshalPKIXPublicKey(pub)
-		id := make([]byte, 20)
-		copy(id, pubKeyBytes[:20])
-		return id
-	case *ecdsa.PublicKey:
-		pubKeyBytes, _ := x509.MarshalPKIXPublicKey(pub)
-		id := make([]byte, 20)
-		copy(id, pubKeyBytes[:20])
-		return id
-	default:
-		id := make([]byte, 20)
-		rand.Read(id)
-		return id
-	}
 }
 
 func getPublicKey(privateKey interface{}) interface{} {
