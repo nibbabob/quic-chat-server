@@ -3,6 +3,7 @@ package messaging
 import (
 	"context"
 	"crypto/hmac"
+	"crypto/rand"
 	"crypto/sha256"
 	"encoding/hex"
 	"encoding/json"
@@ -450,16 +451,15 @@ func createPersonalMessage(originalMsg types.Message, encryptedContent string, _
 
 func generateSecureMessageID() string {
 	// Generate a cryptographically secure message ID
-	return fmt.Sprintf("%d-%s", time.Now().UnixNano(), generateRandomString(16))
+	return fmt.Sprintf("%d-%s", time.Now().UnixNano(), generateSecureRandomString(16))
 }
 
-func generateRandomString(length int) string {
-	const charset = "abcdefghijklmnopqrstuvwxyzABCDEFGHIJKLMNOPQRSTUVWXYZ0123456789"
-	bytes := make([]byte, length)
-	for i := range bytes {
-		bytes[i] = charset[time.Now().UnixNano()%int64(len(charset))]
+func generateSecureRandomString(length int) string {
+	b := make([]byte, length)
+	if _, err := rand.Read(b); err != nil {
+		return ""
 	}
-	return string(bytes)
+	return hex.EncodeToString(b)
 }
 
 func calculateContentSize(msg *types.Message) int {

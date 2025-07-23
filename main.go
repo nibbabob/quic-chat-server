@@ -156,7 +156,6 @@ func startSecureServer() {
 		"tls_version":     "TLS 1.3",
 		"cipher_suites":   "ChaCha20-Poly1305, AES-256-GCM",
 		"forward_secrecy": "Enabled",
-		"perfect_secrecy": "Enabled",
 	})
 
 	// Connection acceptance loop with security monitoring

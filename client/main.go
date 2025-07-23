@@ -153,7 +153,6 @@ func main() {
 	// Keep client running
 	select {}
 }
-
 func displaySecurityBanner() {
 	fmt.Printf("%s%s╔══════════════════════════════════════════╗%s\n", colorBold, colorCyan, colorReset)
 	fmt.Printf("%s%s║     🔒 ULTRA-SECURE MESSAGING CLIENT     ║%s\n", colorBold, colorCyan, colorReset)
@@ -263,15 +262,16 @@ func connectToSecureServer() error {
 	}
 
 	var err2 error
-	client.connection, err2 = quic.DialAddr(context.Background(), "localhost:4433", tlsConf, quicConf)
+	conn, err2 := quic.DialAddr(context.Background(), "localhost:4433", tlsConf, quicConf)
 	if err2 != nil {
 		return fmt.Errorf("failed to establish QUIC connection: %w", err2)
 	}
+	client.connection = conn
 
 	// Verify connection security
-	connectionState := client.connection.ConnectionState()
-	if connectionState.TLS.Version != tls.VersionTLS13 {
-		return fmt.Errorf("insecure TLS version: %x", connectionState.TLS.Version)
+	connectionState := client.connection.ConnectionState().TLS
+	if connectionState.Version != tls.VersionTLS13 {
+		return fmt.Errorf("insecure TLS version: %x", connectionState.Version)
 	}
 
 	client.connectionSecure = true
@@ -781,7 +781,10 @@ func (c *SecureClient) secureShutdown() {
 	}
 
 	// Restore terminal
-	term.Restore(int(os.Stdin.Fd()), nil)
+	oldState, err := term.GetState(int(os.Stdin.Fd()))
+	if err == nil {
+		term.Restore(int(os.Stdin.Fd()), oldState)
+	}
 
 	fmt.Printf("%s✅ Secure shutdown completed%s\n", colorGreen, colorReset)
 	os.Exit(0)
@@ -795,10 +798,13 @@ func (c *SecureClient) emergencyShutdown() {
 
 	// Force close connection
 	if c.connection != nil {
-		c.connection.CloseWithError(0x100, "emergency_shutdown")
+		c.connection.CloseWithError(quic.ApplicationErrorCode(0x100), "emergency_shutdown")
 	}
 
-	term.Restore(int(os.Stdin.Fd()), nil)
+	oldState, err := term.GetState(int(os.Stdin.Fd()))
+	if err == nil {
+		term.Restore(int(os.Stdin.Fd()), oldState)
+	}
 	os.Exit(1)
 }
 
@@ -837,22 +843,18 @@ func (c *SecureClient) clearSensitiveData() {
 
 func (c *SecureClient) encryptForRecipient(content string, pubKey *ecdsa.PublicKey) (string, error) {
 	// ECIES encryption
-	pubKeyBytes, err := x509.MarshalPKIXPublicKey(pubKey)
+	pubKeyEcdh, err := pubKey.ECDH()
 	if err != nil {
-		return "", fmt.Errorf("failed to marshal public key: %w", err)
+		return "", fmt.Errorf("failed to convert public key to ECDH: %w", err)
 	}
 
-	ecdhCurve, err := ecdh.P521().NewPublicKey(pubKeyBytes)
-	if err != nil {
-		return "", err
-	}
 	ephemeralPriv, err := ecdh.P521().GenerateKey(rand.Reader)
 	if err != nil {
 		return "", err
 	}
 	ephemeralPub := ephemeralPriv.PublicKey()
 
-	sharedSecret, err := ephemeralPriv.ECDH(ecdhCurve)
+	sharedSecret, err := ephemeralPriv.ECDH(pubKeyEcdh)
 	if err != nil {
 		return "", fmt.Errorf("ECDH key exchange failed: %w", err)
 	}
@@ -888,13 +890,15 @@ func (c *SecureClient) decryptMessage(ciphertextHex string) (string, error) {
 	}
 
 	ecdhCurve := ecdh.P521()
+	// The length of a P-521 public key is 1 + 2 * ((521 + 7) / 8) for uncompressed form
+	// but the `Bytes()` method on an `ecdh.PublicKey` returns the raw x and y coordinates.
+	// For P-521, each coordinate is 66 bytes, so the total length is 132 bytes.
+	pubKeyLen := 132
 
-	pubKeyBytes, err := x509.MarshalPKIXPublicKey(&c.privateKey.PublicKey)
-	if err != nil {
-		return "", fmt.Errorf("failed to marshal public key: %w", err)
+	if len(ciphertext) <= pubKeyLen {
+		return "", fmt.Errorf("invalid ciphertext length")
 	}
 
-	pubKeyLen := len(pubKeyBytes)
 	ephemeralPubBytes := ciphertext[:pubKeyLen]
 	ciphertext = ciphertext[pubKeyLen:]
 
@@ -938,7 +942,6 @@ func (c *SecureClient) decryptMessage(ciphertextHex string) (string, error) {
 
 	return string(plaintext), nil
 }
-
 func (c *SecureClient) processExistingUsers(users map[string]string) {
 	for name, keyStr := range users {
 		if name != c.clientName {
