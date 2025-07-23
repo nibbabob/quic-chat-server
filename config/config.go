@@ -136,7 +136,7 @@ func getSecureDefaults() *Config {
 			CertificateValidityDays: 30,      // Short-lived certificates
 			KeyStrength:             4096,    // Strong RSA keys
 			UseECDSA:                true,    // ECDSA preferred for performance
-			ECDSACurve:              "P-384", // High security curve
+			ECDSACurve:              "P-521", // High security curve
 		},
 		Monitoring: MonitoringConfig{
 			HealthPort:              "8080",

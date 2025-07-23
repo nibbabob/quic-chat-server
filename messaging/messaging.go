@@ -12,6 +12,8 @@ import (
 	"quic-chat-server/security"
 	"quic-chat-server/types"
 	"runtime"
+	"sort"
+	"strings"
 	"sync"
 	"time"
 )
@@ -461,7 +463,10 @@ func createPersonalMessage(originalMsg types.Message, encryptedContent string, _
 func generateSecureMessageID() string {
 	bytes := make([]byte, 16)
 	if _, err := rand.Read(bytes); err != nil {
-		panic("failed to generate secure message ID: " + err.Error())
+		// Fallback to a less secure method if rand.Read fails, and log the error.
+		// A panic here could bring down the whole server.
+		logger.Error("Failed to generate secure message ID, using fallback", map[string]interface{}{"error": err})
+		return fmt.Sprintf("insecure-%d", time.Now().UnixNano())
 	}
 	return hex.EncodeToString(bytes)
 }
@@ -500,22 +505,38 @@ func validateMessageHMAC(msg *types.Message) bool {
 	return ValidateMessageIntegrity(msg, hmacSecret)
 }
 
-// GenerateMessageHMAC creates HMAC-SHA256 of message content for integrity verification
-func GenerateMessageHMAC(msg *types.Message, secret []byte) string {
-	return generateMessageHMAC(msg, secret)
-}
-
-// generateMessageHMAC creates HMAC-SHA256 of message content for integrity verification
+// generateMessageHMAC creates a deterministic representation of the message for HMAC signing.
+// This is critical to prevent vulnerabilities from non-deterministic JSON marshaling.
 func generateMessageHMAC(msg *types.Message, secret []byte) string {
-	// Create HMAC-SHA256 of message content
+	// Create a canonical representation of the message data.
+	// This ensures the HMAC is always calculated on the exact same string for the same message.
+	var sb strings.Builder
+	sb.WriteString(fmt.Sprintf("id:%s;", msg.ID))
+	sb.WriteString(fmt.Sprintf("type:%s;", msg.Type))
+	sb.WriteString(fmt.Sprintf("author:%s;", msg.Metadata.Author))
+	sb.WriteString(fmt.Sprintf("channel_id:%s;", msg.Metadata.ChannelID))
+	sb.WriteString(fmt.Sprintf("sequence:%d;", msg.Sequence))
+	sb.WriteString(fmt.Sprintf("timestamp:%d;", msg.Timestamp.UnixNano()))
+
+	// Sort and add content map to the canonical string
+	if len(msg.Metadata.Content) > 0 {
+		keys := make([]string, 0, len(msg.Metadata.Content))
+		for k := range msg.Metadata.Content {
+			keys = append(keys, k)
+		}
+		sort.Strings(keys)
+		for _, k := range keys {
+			sb.WriteString(fmt.Sprintf("content[%s]:%s;", k, msg.Metadata.Content[k]))
+		}
+	} else {
+		sb.WriteString(fmt.Sprintf("single_content:%s;", msg.Metadata.SingleContent))
+	}
+
+	canonicalData := sb.String()
+
+	// Create HMAC-SHA256
 	h := hmac.New(sha256.New, secret)
-
-	// Hash message data
-	data, _ := json.Marshal(msg.Metadata)
-	h.Write(data)
-	h.Write([]byte(msg.Type))
-	h.Write([]byte(fmt.Sprintf("%d", msg.Sequence)))
-
+	h.Write([]byte(canonicalData))
 	return hex.EncodeToString(h.Sum(nil))
 }
 

@@ -9,7 +9,6 @@ echo     🔒 ULTRA-SECURE WHISTLEBLOWER COMMUNICATION SYSTEM
 echo        Intelligence Agency Protection Grade
 echo ================================================================
 echo.
-
 REM Check if Go is installed
 go version >nul 2>&1
 if errorlevel 1 (
@@ -20,7 +19,6 @@ if errorlevel 1 (
 
 echo 🔧 Building secure components...
 echo.
-
 REM Build server
 echo 📦 Building server...
 set CGO_ENABLED=0
@@ -61,12 +59,12 @@ echo     "max_rooms_per_server": 5,
 echo     "max_users_per_room": 4
 echo   },
 echo   "security": {
-echo     "require_client_authentication": false,
+echo     "require_client_authentication": true,
 echo     "enable_perfect_forward_secrecy": true,
 echo     "rate_limit_messages_per_minute": 30
 echo   },
 echo   "crypto": {
-echo     "use_ecdsa_instead_of_rsa": true,
+ "use_ecdsa_instead_of_rsa": true,
 echo     "ecdsa_curve": "P-384"
 echo   },
 echo   "monitoring": {
@@ -82,7 +80,6 @@ echo }
 
 echo ✅ Configuration created
 echo.
-
 REM Start server
 echo 🚀 Starting secure server...
 set SECURE_CONFIG_PATH=test-config.json
@@ -101,7 +98,7 @@ echo ================================================================
 echo.
 echo  1. Open TWO new Command Prompt windows
 echo  2. In first window:  cd client ^&^& secure-client.exe
-echo  3. In second window: cd client ^&^& secure-client.exe  
+echo  3. In second window: cd client ^&^& secure-client.exe
 echo  4. Use same room name in both clients
 echo  5. Start chatting securely!
 echo.

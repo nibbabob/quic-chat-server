@@ -3,8 +3,10 @@ package utils
 import (
 	"crypto/rand"
 	"crypto/sha256"
+	"crypto/subtle"
 	"encoding/hex"
 	"fmt"
+	"log"
 	"time"
 )
 
@@ -12,7 +14,8 @@ import (
 func GenerateSecureID() string {
 	bytes := make([]byte, 16)
 	if _, err := rand.Read(bytes); err != nil {
-		panic("fatal error: unable to generate secure random data")
+		// This should never happen on a modern OS, but if it does, it's a critical failure.
+		log.Fatalf("Fatal error: unable to generate secure random data: %v", err)
 	}
 	return hex.EncodeToString(bytes)
 }
@@ -21,7 +24,7 @@ func GenerateSecureID() string {
 func GenerateNonce() string {
 	bytes := make([]byte, 32) // 256-bit nonce
 	if _, err := rand.Read(bytes); err != nil {
-		panic("fatal error: unable to generate secure random data")
+		log.Fatalf("Fatal error: unable to generate secure random data for nonce: %v", err)
 	}
 	return hex.EncodeToString(bytes)
 }
@@ -34,24 +37,16 @@ func GenerateToken(length int) string {
 
 	bytes := make([]byte, length)
 	if _, err := rand.Read(bytes); err != nil {
-		panic("fatal error: unable to generate secure random data")
+		log.Fatalf("Fatal error: unable to generate secure random data for token: %v", err)
 	}
 
 	return hex.EncodeToString(bytes)
 }
 
-// SecureCompare performs constant-time string comparison
+// SecureCompare performs constant-time string comparison to prevent timing attacks.
 func SecureCompare(a, b string) bool {
-	if len(a) != len(b) {
-		return false
-	}
-
-	var result byte
-	for i := 0; i < len(a); i++ {
-		result |= a[i] ^ b[i]
-	}
-
-	return result == 0
+	// Use the standard library's constant-time comparison function.
+	return subtle.ConstantTimeCompare([]byte(a), []byte(b)) == 1
 }
 
 // HashString creates a SHA-256 hash of the input string

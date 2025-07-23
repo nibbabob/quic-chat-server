@@ -188,18 +188,19 @@ func handleSecureJoin(_ context.Context, stream *quic.Stream, conn *quic.Conn, c
 		return
 	}
 
-	// **SECURITY FIX:** Use a single lock for checking and creating rooms to prevent race conditions.
-	server.Mutex.Lock()
+	// Check room limits
+	server.Mutex.RLock()
 	roomCount := len(server.Rooms)
-	room, exists := server.Rooms[msg.Metadata.ChannelID]
+	server.Mutex.RUnlock()
 
-	// Check room limits before creating a new one
-	if !exists && roomCount >= serverConfig.Server.MaxRoomsPerServer {
-		server.Mutex.Unlock()
+	if roomCount >= serverConfig.Server.MaxRoomsPerServer {
 		sendErrorResponse(stream, "server_room_limit_exceeded")
 		return
 	}
 
+	// Get or create room
+	server.Mutex.Lock()
+	room, exists := server.Rooms[msg.Metadata.ChannelID]
 	if !exists {
 		room = &types.Room{
 			ID:      msg.Metadata.ChannelID,
