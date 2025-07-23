@@ -232,12 +232,23 @@ func connectToSecureServer() error {
 		return fmt.Errorf("failed to generate client certificate: %w", err)
 	}
 
+	// Create a certificate pool and add the server's self-signed certificate
+	// In a production environment, this would be a proper CA certificate
+	caCert, err := os.ReadFile("certs/cert.pem")
+	if err != nil {
+		return fmt.Errorf("failed to read server certificate: %w", err)
+	}
+	caCertPool := x509.NewCertPool()
+	caCertPool.AppendCertsFromPEM(caCert)
+
 	// Maximum security TLS configuration
 	tlsConf := &tls.Config{
-		InsecureSkipVerify: true, // In a real application, you would not skip verification
-		NextProtos:         []string{"secure-messaging-v1"},
-		MinVersion:         tls.VersionTLS13,
-		MaxVersion:         tls.VersionTLS13,
+		// **SECURITY FIX:** Removed InsecureSkipVerify: true
+		// We now use a custom root CA pool to verify the server's self-signed certificate.
+		RootCAs:    caCertPool,
+		NextProtos: []string{"secure-messaging-v1"},
+		MinVersion: tls.VersionTLS13,
+		MaxVersion: tls.VersionTLS13,
 		CipherSuites: []uint16{
 			tls.TLS_CHACHA20_POLY1305_SHA256,
 			tls.TLS_AES_256_GCM_SHA384,

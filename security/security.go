@@ -286,6 +286,12 @@ func SecureMemoryWipe() {
 	memoryMutex.Lock()
 	defer memoryMutex.Unlock()
 
+	// **SECURITY NOTE:** Wiping memory in Go is not a guarantee. The Go runtime
+	// can move memory around, which may leave copies of the sensitive data. This
+	// function is a best-effort attempt to clear the data, but it should not
+	// be considered a foolproof security measure. For high-security applications,
+	// consider using a language that provides more control over memory, like Rust.
+
 	// Wipe all registered sensitive memory
 	for _, key := range memoryKeys {
 		if len(key) > 0 {
@@ -502,7 +508,10 @@ func extractIPFromAddr(addr string) string {
 func detectSuspiciousContent(content []byte) bool {
 	contentStr := strings.ToLower(string(content))
 
-	// Patterns that might indicate malicious activity
+	// **SECURITY NOTE:** This is a very basic, signature-based detection method.
+	// It can be easily bypassed and should not be relied upon as a primary
+	// security control. A more robust solution would involve more advanced
+	// heuristics, machine learning, or integration with a dedicated WAF.
 	suspiciousPatterns := []string{
 		"<script", "javascript:", "eval(", "document.cookie",
 		"cmd.exe", "/bin/sh", "rm -rf", "sudo ",

@@ -422,6 +422,9 @@ func verifyConnectionSecurity(cs tls.ConnectionState, cfg *config.Config) error 
 		// Connection is using ephemeral keys (good for PFS)
 	}
 
+	// **SECURITY NOTE:** In a production system, you might implement certificate pinning
+	// or check against a list of approved client certificate fingerprints here.
+
 	return nil
 }
 
@@ -438,11 +441,18 @@ func setupKeyRotation(cfg *config.Config) {
 
 	keyRotationTimer = time.AfterFunc(rotationInterval, func() {
 		log.Println("🔄 Starting automatic key rotation")
+		// **SECURITY NOTE:** This is a simplified key rotation. A production system
+		// would require a more sophisticated, zero-downtime solution. This would involve
+		// loading the new certificate into memory and updating the TLS config of the
+		// running server without restarting it. Go's `tls.Config` does not support
+		// dynamic updates of certificates, so this would require a custom listener.
+		// For now, this will generate a new certificate, but a server restart is
+		// required to load it.
 
 		if err := generateMaxSecurityCertificate(); err != nil {
 			log.Printf("❌ Key rotation failed: %v", err)
 		} else {
-			log.Println("✅ Key rotation completed successfully")
+			log.Println("✅ Key rotation completed successfully. A server restart is required to apply the new key.")
 		}
 
 		// Schedule next rotation
