@@ -440,35 +440,66 @@ func ForceCloseAllConnections() {
 	}
 }
 
+// KickUser kicks a user from the server.
+func KickUser(userID string) bool {
+	server.Mutex.RLock()
+	defer server.Mutex.RUnlock()
+
+	var clientToKick *types.ClientConnection
+
+	for _, client := range server.Connections {
+		if client.UserID == userID {
+			clientToKick = client
+			break
+		}
+	}
+
+	if clientToKick != nil && clientToKick.Conn != nil {
+		// Just close the connection. The deferred cleanup in HandleSecureConnection
+		// will take care of removing the user from all maps, preventing a deadlock.
+		clientToKick.Conn.CloseWithError(0x102, "kicked_by_admin")
+		logger.Info("👢 User kicked by admin", map[string]interface{}{
+			"user_id": userID,
+		})
+		return true
+	}
+
+	return false
+}
+
 // Helper functions
 
 func cleanupConnection(connID string) {
 	server.Mutex.Lock()
+	defer server.Mutex.Unlock()
+
 	client, exists := server.Connections[connID]
-	if exists {
-		if client.RoomID != "" {
-			if room, roomExists := server.Rooms[client.RoomID]; roomExists {
-				room.Mutex.Lock()
-				delete(room.Clients, connID)
-
-				// Notify other users of departure
-				if client.Authenticated {
-					notifyUserLeft(client.RoomID, connID, client.UserID)
-				}
-
-				// Clean up empty rooms
-				if len(room.Clients) == 0 {
-					delete(server.Rooms, client.RoomID)
-					logger.Info("🏠 Empty room cleaned up", map[string]interface{}{
-						"room_id": client.RoomID,
-					})
-				}
-				room.Mutex.Unlock()
-			}
-		}
-		delete(server.Connections, connID)
+	if !exists {
+		// Already cleaned up, which can happen in the kick scenario
+		return
 	}
-	server.Mutex.Unlock()
+
+	if client.RoomID != "" {
+		if room, roomExists := server.Rooms[client.RoomID]; roomExists {
+			room.Mutex.Lock()
+			delete(room.Clients, connID)
+
+			// Notify other users of departure
+			if client.Authenticated {
+				notifyUserLeft(client.RoomID, connID, client.UserID)
+			}
+
+			// Clean up empty rooms
+			if len(room.Clients) == 0 {
+				delete(server.Rooms, client.RoomID)
+				logger.Info("🏠 Empty room cleaned up", map[string]interface{}{
+					"room_id": client.RoomID,
+				})
+			}
+			room.Mutex.Unlock()
+		}
+	}
+	delete(server.Connections, connID)
 }
 
 func validateMessage(msg *types.Message) error {
@@ -583,16 +614,20 @@ func notifyKeyRotation(roomID, excludeConnID, userID, newPublicKey string) {
 }
 
 func isConnectionClosed(err error) bool {
-	// Check for common connection closed errors
 	if err == nil {
 		return false
 	}
-	if strings.Contains(err.Error(), "connection closed") {
+	// Check for common connection closed errors
+	errStr := err.Error()
+	if strings.Contains(errStr, "connection closed") || strings.Contains(errStr, "Application error") {
 		return true
 	}
-	// Check for specific quic-go error
-	if qErr, ok := err.(*quic.ApplicationError); ok && qErr.ErrorCode == 0 {
-		return true
+	// Check for specific quic-go error codes that mean the connection is gone
+	if qErr, ok := err.(*quic.ApplicationError); ok {
+		// 0 is a graceful close. 0x102 is our custom "kicked" code. 0x200 is shutdown.
+		if qErr.ErrorCode == 0 || qErr.ErrorCode == 0x102 || qErr.ErrorCode == 0x200 {
+			return true
+		}
 	}
 	return false
 }

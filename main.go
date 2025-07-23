@@ -1,6 +1,7 @@
 package main
 
 import (
+	"bufio"
 	"context"
 	"crypto/rand"
 	"encoding/hex"
@@ -15,6 +16,7 @@ import (
 	"quic-chat-server/messaging"
 	"quic-chat-server/monitoring"
 	"quic-chat-server/security"
+	"strings"
 	"syscall"
 	"time"
 
@@ -54,11 +56,11 @@ func main() {
 	// Start health monitoring (on separate goroutine for isolation)
 	go startSecureHealthServer()
 
-	// Start the main QUIC server
-	startSecureServer()
+	// Start the main QUIC server in a goroutine
+	go startSecureServer()
 
-	// Keep main thread alive
-	select {}
+	// Handle server commands from the console
+	handleServerCommands()
 }
 
 func initializeSecureEnvironment() {
@@ -246,4 +248,81 @@ func generateSecureConnectionID() (string, error) {
 		return "", fmt.Errorf("failed to generate secure connection ID: %w", err)
 	}
 	return hex.EncodeToString(bytes), nil
+}
+
+func handleServerCommands() {
+	reader := bufio.NewReader(os.Stdin)
+	fmt.Println("Server command interface ready. Type 'help' for commands.")
+
+	for {
+		fmt.Print("> ")
+		input, err := reader.ReadString('\n')
+		if err != nil {
+			logger.Error("Error reading command", map[string]interface{}{"error": err})
+			continue
+		}
+
+		input = strings.TrimSpace(input)
+		parts := strings.Split(input, " ")
+		command := parts[0]
+
+		switch command {
+		case "help":
+			fmt.Println("Available commands:")
+			fmt.Println("  status              - Show server status")
+			fmt.Println("  rooms               - List active rooms")
+			fmt.Println("  users               - List connected users")
+			fmt.Println("  kick <user_id>      - Kick a user")
+			fmt.Println("  shutdown            - Shutdown the server")
+			fmt.Println("  help                - Show this help message")
+		case "status":
+			metrics := monitoring.GetSecureMetrics()
+			fmt.Println(string(metrics))
+		case "rooms":
+			server := handlers.GetServer()
+			server.Mutex.RLock()
+			if len(server.Rooms) == 0 {
+				fmt.Println("No active rooms.")
+			} else {
+				fmt.Println("Active rooms:")
+				for roomID, room := range server.Rooms {
+					room.Mutex.RLock()
+					fmt.Printf("  - %s (%d users)\n", roomID, len(room.Clients))
+					room.Mutex.RUnlock()
+				}
+			}
+			server.Mutex.RUnlock()
+		case "users":
+			server := handlers.GetServer()
+			server.Mutex.RLock()
+			if len(server.Connections) == 0 {
+				fmt.Println("No connected users.")
+			} else {
+				fmt.Println("Connected users:")
+				for _, client := range server.Connections {
+					fmt.Printf("  - UserID: %s, RoomID: %s, ConnID: %s\n", client.UserID, client.RoomID, client.ID[:8]+"...")
+				}
+			}
+			server.Mutex.RUnlock()
+		case "kick":
+			if len(parts) < 2 {
+				fmt.Println("Usage: kick <user_id>")
+				continue
+			}
+			userID := parts[1]
+			if handlers.KickUser(userID) {
+				fmt.Printf("User '%s' kicked.\n", userID)
+			} else {
+				fmt.Printf("User '%s' not found.\n", userID)
+			}
+		case "shutdown":
+			p, _ := os.FindProcess(os.Getpid())
+			p.Signal(os.Interrupt)
+			return // Exit the command loop
+		case "":
+			// Ignore empty input
+		default:
+			fmt.Println("Unknown command. Type 'help' for a list of commands.")
+		}
+	}
 }

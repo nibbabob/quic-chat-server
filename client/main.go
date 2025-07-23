@@ -92,6 +92,10 @@ type SecureClient struct {
 	messageCount     int64
 	encryptionErrors int
 	maxErrors        int
+
+	// UI
+	messageArea      []string
+	messageAreaMutex sync.Mutex
 }
 
 // Terminal colors for security-conscious UI
@@ -105,7 +109,9 @@ const (
 	colorBold   = "\033[1m"
 	colorDim    = "\033[2m"
 	colorReset  = "\033[0m"
+	clearScreen = "\033[2J\033[H"
 	clearLine   = "\x1b[2K"
+	maxMessages = 20
 )
 
 var client *SecureClient
@@ -117,10 +123,11 @@ func main() {
 		maxErrors:        5,
 		lastActivity:     time.Now(),
 		connectionSecure: false,
+		messageArea:      make([]string, 0, maxMessages),
 	}
 
 	// Clear screen for security
-	fmt.Print("\033[2J\033[H")
+	fmt.Print(clearScreen)
 
 	// Display security banner
 	displaySecurityBanner()
@@ -148,8 +155,7 @@ func main() {
 	go client.handleUserInput(userInputChan)
 	go client.securityMonitor()
 
-	// Initial prompt
-	client.redrawSecureLine()
+	client.redrawScreen()
 
 	// Keep client running
 	select {}
@@ -199,7 +205,7 @@ func initializeSecureSession() error {
 		return fmt.Errorf("failed to generate keys: %w", err)
 	}
 
-	fmt.Printf("%s✅ Secure session initialized%s\n", colorGreen, colorReset)
+	client.addMessage(fmt.Sprintf("%s✅ Secure session initialized%s", colorGreen, colorReset))
 	return nil
 }
 
@@ -219,12 +225,12 @@ func generateEphemeralKeys() error {
 	}
 	client.sessionKey = sessionKey
 
-	fmt.Printf("%s🔐 Generated ECDSA P-521 key pair + session key%s\n", colorGreen, colorReset)
+	client.addMessage(fmt.Sprintf("%s🔐 Generated ECDSA P-521 key pair + session key%s", colorGreen, colorReset))
 	return nil
 }
 
 func connectToSecureServer() error {
-	fmt.Printf("%s🛰️  Establishing secure QUIC connection...%s\n", colorYellow, colorReset)
+	client.addMessage(fmt.Sprintf("%s🛰️  Establishing secure QUIC connection...%s", colorYellow, colorReset))
 
 	// Check if we need to generate a client certificate
 	clientCert, err := generateClientCertificate()
@@ -285,7 +291,7 @@ func connectToSecureServer() error {
 	}
 
 	client.connectionSecure = true
-	fmt.Printf("%s✅ Secure connection established (TLS 1.3 + Mutual Auth)%s\n", colorGreen, colorReset)
+	client.addMessage(fmt.Sprintf("%s✅ Secure connection established (TLS 1.3 + Mutual Auth)%s", colorGreen, colorReset))
 	return nil
 }
 
@@ -323,12 +329,12 @@ func generateClientCertificate() (*tls.Certificate, error) {
 		PrivateKey:  certPrivKey,
 	}
 
-	fmt.Printf("%s🔐 Generated ephemeral client certificate%s\n", colorGreen, colorReset)
+	client.addMessage(fmt.Sprintf("%s🔐 Generated ephemeral client certificate%s", colorGreen, colorReset))
 	return cert, nil
 }
 
 func joinRoomSecurely() error {
-	fmt.Printf("%s🚪 Joining secure room '%s' as '%s'...%s\n", colorYellow, client.roomName, client.clientName, colorReset)
+	client.addMessage(fmt.Sprintf("%s🚪 Joining secure room '%s' as '%s'...%s", colorYellow, client.roomName, client.clientName, colorReset))
 
 	stream, err := client.connection.OpenStreamSync(context.Background())
 	if err != nil {
@@ -379,11 +385,9 @@ func (c *SecureClient) handleJoinResponse(response Message) {
 	c.currentInputMutex.Lock()
 	defer c.currentInputMutex.Unlock()
 
-	fmt.Printf("\r%s", clearLine)
-
 	switch response.Type {
 	case "join_ack":
-		fmt.Printf("%s✅ [Server]: %s%s\n", colorGreen, response.Metadata.SingleContent, colorReset)
+		c.addMessage(fmt.Sprintf("%s✅ [Server]: %s%s", colorGreen, response.Metadata.SingleContent, colorReset))
 
 		// Handle authentication challenge if required
 		if response.Metadata.RequiresAuth && response.Metadata.AuthChallenge != "" {
@@ -397,14 +401,14 @@ func (c *SecureClient) handleJoinResponse(response Message) {
 		}
 
 		c.authenticated = true
-		fmt.Printf("%s🔒 Secure room joined successfully%s\n", colorGreen, colorReset)
+		c.addMessage(fmt.Sprintf("%s🔒 Secure room joined successfully%s", colorGreen, colorReset))
 
 	case "error":
-		fmt.Printf("%s❌ [Error]: %s%s\n", colorRed, response.Metadata.SingleContent, colorReset)
+		c.addMessage(fmt.Sprintf("%s❌ [Error]: %s%s", colorRed, response.Metadata.SingleContent, colorReset))
 		os.Exit(1)
 	}
 
-	c.redrawSecureLine()
+	c.redrawScreen()
 }
 
 func (c *SecureClient) handleAuthenticationChallenge() {
@@ -437,11 +441,28 @@ func (c *SecureClient) handleAuthenticationChallenge() {
 	defer stream.Close()
 
 	json.NewEncoder(stream).Encode(authMsg)
-	fmt.Printf("%s🔐 Authentication response sent%s\n", colorBlue, colorReset)
+	c.addMessage(fmt.Sprintf("%s🔐 Authentication response sent%s", colorBlue, colorReset))
 }
 
-func (c *SecureClient) redrawSecureLine() {
-	fmt.Printf("\r%s%s>> %s%s", clearLine, colorCyan, string(c.currentInput), colorReset)
+func (c *SecureClient) redrawScreen() {
+	fmt.Print(clearScreen)
+	c.messageAreaMutex.Lock()
+	for _, msg := range c.messageArea {
+		fmt.Println(msg)
+	}
+	c.messageAreaMutex.Unlock()
+
+	fmt.Printf("%s>> %s%s", colorCyan, string(c.currentInput), colorReset)
+}
+
+func (c *SecureClient) addMessage(msg string) {
+	c.messageAreaMutex.Lock()
+	defer c.messageAreaMutex.Unlock()
+
+	if len(c.messageArea) >= maxMessages {
+		c.messageArea = c.messageArea[1:]
+	}
+	c.messageArea = append(c.messageArea, msg)
 }
 
 func (c *SecureClient) readSecureInput(inputChan chan<- string) {
@@ -466,7 +487,7 @@ func (c *SecureClient) readSecureInput(inputChan chan<- string) {
 		case '\r', '\n': // Enter
 			input := string(c.currentInput)
 			c.currentInput = []rune{}
-			c.redrawSecureLine()
+			c.redrawScreen()
 			c.currentInputMutex.Unlock()
 			inputChan <- input
 			continue
@@ -485,7 +506,7 @@ func (c *SecureClient) readSecureInput(inputChan chan<- string) {
 		default:
 			c.currentInput = append(c.currentInput, r)
 		}
-		c.redrawSecureLine()
+		c.redrawScreen()
 		c.currentInputMutex.Unlock()
 	}
 }
@@ -522,41 +543,39 @@ func (c *SecureClient) handleIncomingStream(stream *quic.Stream) {
 	c.currentInputMutex.Lock()
 	defer c.currentInputMutex.Unlock()
 
-	fmt.Printf("\r%s", clearLine)
-
 	switch msg.Type {
 	case "message":
 		c.handleSecureMessage(msg)
 	case "user_joined":
 		c.handleUserJoined(msg)
 	case "user_left":
-		fmt.Printf("%s📤 [Room]: %s%s\n", colorYellow, msg.Metadata.SingleContent, colorReset)
+		c.addMessage(fmt.Sprintf("%s📤 [Room]: %s%s", colorYellow, msg.Metadata.SingleContent, colorReset))
 	case "key_rotated":
 		c.handleKeyRotation(msg)
 	case "server_shutdown":
-		fmt.Printf("%s⚠️  [Server]: %s%s\n", colorYellow, msg.Metadata.SingleContent, colorReset)
+		c.addMessage(fmt.Sprintf("%s⚠️  [Server]: %s%s", colorYellow, msg.Metadata.SingleContent, colorReset))
 		c.secureShutdown()
 	default:
-		fmt.Printf("%s📢 [Server]: %s (%s)%s\n", colorBlue, msg.Metadata.SingleContent, msg.Type, colorReset)
+		c.addMessage(fmt.Sprintf("%s📢 [Server]: %s (%s)%s", colorBlue, msg.Metadata.SingleContent, msg.Type, colorReset))
 	}
 
-	c.redrawSecureLine()
+	c.redrawScreen()
 }
 
 func (c *SecureClient) handleSecureMessage(msg Message) {
 	if !msg.Encrypted {
-		fmt.Printf("%s⚠️  [SECURITY WARNING]: Unencrypted message from %s: %s%s\n", colorRed, msg.Metadata.Author, msg.Metadata.SingleContent, colorReset)
+		c.addMessage(fmt.Sprintf("%s⚠️  [SECURITY WARNING]: Unencrypted message from %s: %s%s", colorRed, msg.Metadata.Author, msg.Metadata.SingleContent, colorReset))
 		return
 	}
 
 	decryptedContent, err := c.decryptMessage(msg.Metadata.SingleContent)
 	if err != nil {
 		c.encryptionErrors++
-		fmt.Printf("%s❌ [DECRYPT ERROR]: Failed to decrypt message from %s%s\n", colorRed, msg.Metadata.Author, colorReset)
+		c.addMessage(fmt.Sprintf("%s❌ [DECRYPT ERROR]: Failed to decrypt message from %s%s", colorRed, msg.Metadata.Author, colorReset))
 
 		// Security measure: disconnect if too many decryption errors
 		if c.encryptionErrors > c.maxErrors {
-			fmt.Printf("%s🚨 [SECURITY]: Too many decryption errors, disconnecting%s\n", colorRed, colorReset)
+			c.addMessage(fmt.Sprintf("%s🚨 [SECURITY]: Too many decryption errors, disconnecting%s", colorRed, colorReset))
 			c.emergencyShutdown()
 		}
 		return
@@ -564,18 +583,18 @@ func (c *SecureClient) handleSecureMessage(msg Message) {
 
 	c.messageCount++
 	c.lastActivity = time.Now()
-	fmt.Printf("%s💬 [%s]: %s%s\n", colorPurple, msg.Metadata.Author, decryptedContent, colorReset)
+	c.addMessage(fmt.Sprintf("%s💬 [%s]: %s%s", colorPurple, msg.Metadata.Author, decryptedContent, colorReset))
 }
 
 func (c *SecureClient) handleUserJoined(msg Message) {
-	fmt.Printf("%s📥 [Room]: %s%s\n", colorGreen, msg.Metadata.SingleContent, colorReset)
+	c.addMessage(fmt.Sprintf("%s📥 [Room]: %s%s", colorGreen, msg.Metadata.SingleContent, colorReset))
 	if msg.Metadata.PublicKey != "" && msg.Metadata.Author != c.clientName {
 		c.storePublicKey(msg.Metadata.Author, msg.Metadata.PublicKey)
 	}
 }
 
 func (c *SecureClient) handleKeyRotation(msg Message) {
-	fmt.Printf("%s🔄 [Security]: %s%s\n", colorCyan, msg.Metadata.SingleContent, colorReset)
+	c.addMessage(fmt.Sprintf("%s🔄 [Security]: %s%s", colorCyan, msg.Metadata.SingleContent, colorReset))
 	if msg.Metadata.PublicKey != "" && msg.Metadata.Author != c.clientName {
 		c.storePublicKey(msg.Metadata.Author, msg.Metadata.PublicKey)
 	}
@@ -617,31 +636,29 @@ func (c *SecureClient) handleCommand(cmd string) {
 	case "/quit", "/exit":
 		c.secureShutdown()
 	default:
-		fmt.Printf("%s❓ Unknown command: %s (type /help for commands)%s\n", colorYellow, parts[0], colorReset)
-		c.redrawSecureLine()
+		c.addMessage(fmt.Sprintf("%s❓ Unknown command: %s (type /help for commands)%s", colorYellow, parts[0], colorReset))
+		c.redrawScreen()
 	}
 }
 
 func (c *SecureClient) displayHelp() {
-	fmt.Printf("\r%s", clearLine)
-	fmt.Printf("%s🔧 Available Commands:%s\n", colorCyan, colorReset)
-	fmt.Printf("  %s/help%s     - Show this help\n", colorGreen, colorReset)
-	fmt.Printf("  %s/status%s   - Show connection status\n", colorGreen, colorReset)
-	fmt.Printf("  %s/rotate%s   - Rotate encryption keys\n", colorGreen, colorReset)
-	fmt.Printf("  %s/quit%s     - Secure disconnect\n", colorGreen, colorReset)
-	fmt.Printf("  %sCtrl+C%s    - Emergency shutdown\n", colorYellow, colorReset)
-	c.redrawSecureLine()
+	c.addMessage(fmt.Sprintf("%s🔧 Available Commands:%s", colorCyan, colorReset))
+	c.addMessage(fmt.Sprintf("  %s/help%s     - Show this help", colorGreen, colorReset))
+	c.addMessage(fmt.Sprintf("  %s/status%s   - Show connection status", colorGreen, colorReset))
+	c.addMessage(fmt.Sprintf("  %s/rotate%s   - Rotate encryption keys", colorGreen, colorReset))
+	c.addMessage(fmt.Sprintf("  %s/quit%s     - Secure disconnect", colorGreen, colorReset))
+	c.addMessage(fmt.Sprintf("  %sCtrl+C%s    - Emergency shutdown", colorYellow, colorReset))
+	c.redrawScreen()
 }
 
 func (c *SecureClient) displayStatus() {
-	fmt.Printf("\r%s", clearLine)
-	fmt.Printf("%s📊 Security Status:%s\n", colorCyan, colorReset)
-	fmt.Printf("  Connection: %s%s%s\n", colorGreen, "Secure (TLS 1.3)", colorReset)
-	fmt.Printf("  Authenticated: %s%v%s\n", colorGreen, c.authenticated, colorReset)
-	fmt.Printf("  Messages: %s%d%s\n", colorBlue, c.messageCount, colorReset)
-	fmt.Printf("  Known Users: %s%d%s\n", colorBlue, len(c.publicKeys), colorReset)
-	fmt.Printf("  Uptime: %s%s%s\n", colorBlue, time.Since(c.lastActivity).Truncate(time.Second), colorReset)
-	c.redrawSecureLine()
+	c.addMessage(fmt.Sprintf("%s📊 Security Status:%s", colorCyan, colorReset))
+	c.addMessage(fmt.Sprintf("  Connection: %s%s%s", colorGreen, "Secure (TLS 1.3)", colorReset))
+	c.addMessage(fmt.Sprintf("  Authenticated: %s%v%s", colorGreen, c.authenticated, colorReset))
+	c.addMessage(fmt.Sprintf("  Messages: %s%d%s", colorBlue, c.messageCount, colorReset))
+	c.addMessage(fmt.Sprintf("  Known Users: %s%d%s", colorBlue, len(c.publicKeys), colorReset))
+	c.addMessage(fmt.Sprintf("  Uptime: %s%s%s", colorBlue, time.Since(c.lastActivity).Truncate(time.Second), colorReset))
+	c.redrawScreen()
 }
 
 func (c *SecureClient) sendEncryptedMessage(content string) error {
@@ -702,7 +719,7 @@ func (c *SecureClient) sendEncryptedMessage(content string) error {
 }
 
 func (c *SecureClient) rotateKeys() error {
-	fmt.Printf("\r%s%s🔄 Rotating encryption keys...%s\n", clearLine, colorYellow, colorReset)
+	c.addMessage(fmt.Sprintf("%s🔄 Rotating encryption keys...%s", colorYellow, colorReset))
 
 	// Generate new key pair
 	if err := generateEphemeralKeys(); err != nil {
@@ -737,8 +754,8 @@ func (c *SecureClient) rotateKeys() error {
 		return fmt.Errorf("failed to send key rotation: %w", err)
 	}
 
-	fmt.Printf("%s✅ Keys rotated successfully%s\n", colorGreen, colorReset)
-	c.redrawSecureLine()
+	c.addMessage(fmt.Sprintf("%s✅ Keys rotated successfully%s", colorGreen, colorReset))
+	c.redrawScreen()
 	return nil
 }
 
@@ -749,8 +766,8 @@ func (c *SecureClient) securityMonitor() {
 	for range ticker.C {
 		// Check for suspicious activity
 		if time.Since(c.lastActivity) > 10*time.Minute {
-			fmt.Printf("\r%s%s⚠️  Idle timeout - consider reconnecting%s\n", clearLine, colorYellow, colorReset)
-			c.redrawSecureLine()
+			c.addMessage(fmt.Sprintf("%s⚠️  Idle timeout - consider reconnecting%s", colorYellow, colorReset))
+			c.redrawScreen()
 		}
 
 		// Memory cleanup
@@ -761,7 +778,9 @@ func (c *SecureClient) securityMonitor() {
 }
 
 func (c *SecureClient) secureShutdown() {
-	fmt.Printf("\r%s%s🔒 Initiating secure shutdown...%s\n", clearLine, colorYellow, colorReset)
+	c.addMessage(fmt.Sprintf("%s🔒 Initiating secure shutdown...%s", colorYellow, colorReset))
+	c.redrawScreen()
+	time.Sleep(1 * time.Second) // Give user time to see the message
 
 	// Clear sensitive data
 	c.clearSensitiveData()
@@ -777,12 +796,15 @@ func (c *SecureClient) secureShutdown() {
 		term.Restore(int(os.Stdin.Fd()), oldState)
 	}
 
+	fmt.Print(clearScreen)
 	fmt.Printf("%s✅ Secure shutdown completed%s\n", colorGreen, colorReset)
 	os.Exit(0)
 }
 
 func (c *SecureClient) emergencyShutdown() {
-	fmt.Printf("\r%s%s🚨 EMERGENCY SHUTDOWN%s\n", clearLine, colorRed, colorReset)
+	c.addMessage(fmt.Sprintf("%s🚨 EMERGENCY SHUTDOWN%s", colorRed, colorReset))
+	c.redrawScreen()
+	time.Sleep(1 * time.Second)
 
 	// Immediate data clearing
 	c.clearSensitiveData()
@@ -796,6 +818,8 @@ func (c *SecureClient) emergencyShutdown() {
 	if err == nil {
 		term.Restore(int(os.Stdin.Fd()), oldState)
 	}
+
+	fmt.Print(clearScreen)
 	os.Exit(1)
 }
 
@@ -950,7 +974,7 @@ func (c *SecureClient) processExistingUsers(users map[string]string) {
 			c.storePublicKey(name, keyStr)
 		}
 	}
-	fmt.Printf("%s🔑 Synchronized %d user keys%s\n", colorGreen, len(users), colorReset)
+	c.addMessage(fmt.Sprintf("%s🔑 Synchronized %d user keys%s", colorGreen, len(users), colorReset))
 }
 
 func (c *SecureClient) storePublicKey(name, keyStr string) {
@@ -980,7 +1004,7 @@ func (c *SecureClient) storePublicKey(name, keyStr string) {
 	c.publicKeys[name] = ecdsaPubKey
 	c.keysMutex.Unlock()
 
-	fmt.Printf("\r%s%s🔑 Synced key for user '%s'%s\n", clearLine, colorGreen, name, colorReset)
+	c.addMessage(fmt.Sprintf("%s🔑 Synced key for user '%s'%s", colorGreen, name, colorReset))
 }
 
 func (c *SecureClient) validateIncomingMessage(msg Message) bool {
