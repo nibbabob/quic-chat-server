@@ -75,8 +75,7 @@ cat > test-config.json << 'EOF'
   "security": {
     "require_client_authentication": true,
     "enable_perfect_forward_secrecy": true,
-    "rate_limit_messages_per_minute": 30,
-	"hmac_secret": "a-secure-secret-for-hmac-should-be-generated-and-long"
+    "rate_limit_messages_per_minute": 30
   },
   "crypto": {
     "use_ecdsa_instead_of_rsa": true,
@@ -94,6 +93,14 @@ cat > test-config.json << 'EOF'
 EOF
 
 echo -e "${GREEN}✅ Configuration created${NC}"
+
+# Generate a secure HMAC secret
+export HMAC_SECRET=$(openssl rand -hex 32)
+if [ -z "$HMAC_SECRET" ]; then
+    echo -e "${RED}❌ Failed to generate HMAC_SECRET${NC}"
+    exit 1
+fi
+echo -e "${GREEN}✅ Secure HMAC_SECRET generated${NC}"
 
 # Start server
 echo ""

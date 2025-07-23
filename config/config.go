@@ -2,6 +2,7 @@ package config
 
 import (
 	"encoding/json"
+	"fmt"
 	"os"
 )
 
@@ -90,6 +91,11 @@ func LoadConfig() (*Config, error) {
 
 	// Override with environment variables for operational security
 	overrideWithEnvironment(config)
+
+	// Validate the configuration
+	if err := config.ValidateConfig(); err != nil {
+		return nil, fmt.Errorf("configuration validation failed: %w", err)
+	}
 
 	return config, nil
 }
@@ -202,17 +208,21 @@ func (c *Config) ValidateConfig() error {
 		c.Security.MaxMessageSize = 1024 * 1024
 	}
 
-	if c.Security.RateLimitMessagesPerMinute > 100 {
-		c.Security.RateLimitMessagesPerMinute = 100
+	if c.Security.RateLimitMessagesPerMinute > 1000 {
+		c.Security.RateLimitMessagesPerMinute = 1000
 	}
 
-	if c.Crypto.KeyStrength < 2048 {
-		c.Crypto.KeyStrength = 2048 // Minimum acceptable
+	if c.Crypto.KeyStrength < 4096 && !c.Crypto.UseECDSA {
+		return fmt.Errorf("RSA key strength must be at least 4096 bits")
 	}
 
 	// Ensure TLS 1.3 minimum
 	if c.Crypto.MinTLSVersion != "1.3" {
-		c.Crypto.MinTLSVersion = "1.3"
+		return fmt.Errorf("TLS version must be 1.3")
+	}
+
+	if c.Security.HMACSecret == "" {
+		return fmt.Errorf("HMAC_SECRET is not set. This is a critical security vulnerability")
 	}
 
 	return nil

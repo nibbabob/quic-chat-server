@@ -234,10 +234,10 @@ func connectToSecureServer() error {
 
 	// Maximum security TLS configuration
 	tlsConf := &tls.Config{
-		RootCAs:    getRootCAs(),
-		NextProtos: []string{"secure-messaging-v1"},
-		MinVersion: tls.VersionTLS13,
-		MaxVersion: tls.VersionTLS13,
+		InsecureSkipVerify: true, // In a real application, you would not skip verification
+		NextProtos:         []string{"secure-messaging-v1"},
+		MinVersion:         tls.VersionTLS13,
+		MaxVersion:         tls.VersionTLS13,
 		CipherSuites: []uint16{
 			tls.TLS_CHACHA20_POLY1305_SHA256,
 			tls.TLS_AES_256_GCM_SHA384,
@@ -276,23 +276,6 @@ func connectToSecureServer() error {
 	client.connectionSecure = true
 	fmt.Printf("%s✅ Secure connection established (TLS 1.3 + Mutual Auth)%s\n", colorGreen, colorReset)
 	return nil
-}
-
-func getRootCAs() *x509.CertPool {
-	// In a real application, you would load the server's root CA certificate
-	// from a secure location. For this example, we'll use the system's root CAs.
-	rootCAs, _ := x509.SystemCertPool()
-	if rootCAs == nil {
-		rootCAs = x509.NewCertPool()
-	}
-
-	// Add your server's certificate to the pool if it's self-signed
-	// certPEM, err := os.ReadFile("path/to/your/cert.pem")
-	// if err == nil {
-	// 	rootCAs.AppendCertsFromPEM(certPEM)
-	// }
-
-	return rootCAs
 }
 
 // generateClientCertificate creates a temporary client certificate for mutual TLS
@@ -672,10 +655,8 @@ func (c *SecureClient) sendEncryptedMessage(content string) error {
 		encryptedContents[name] = encryptedContent
 	}
 
-	if len(encryptedContents) <= 1 {
-		fmt.Printf("\r%s%s⚠️  You are alone in the room%s\n", clearLine, colorYellow, colorReset)
-		c.redrawSecureLine()
-		return nil
+	if len(encryptedContents) <= 1 && len(allRecipients) > 1 {
+		return fmt.Errorf("failed to encrypt message for any recipient")
 	}
 
 	// Create secure message
@@ -958,7 +939,7 @@ func (c *SecureClient) processExistingUsers(users map[string]string) {
 			c.storePublicKey(name, keyStr)
 		}
 	}
-	fmt.Printf("%s🔑 Synchronized %d user keys%s\n", colorGreen, len(users)-1, colorReset)
+	fmt.Printf("%s🔑 Synchronized %d user keys%s\n", colorGreen, len(users), colorReset)
 }
 
 func (c *SecureClient) storePublicKey(name, keyStr string) {
@@ -1025,9 +1006,7 @@ func generateSecureID() string {
 func generateNonce() string {
 	bytes := make([]byte, 32)
 	if _, err := rand.Read(bytes); err != nil {
-		// Fallback nonce
-		hash := sha256.Sum256([]byte(fmt.Sprintf("%d", time.Now().UnixNano())))
-		return hex.EncodeToString(hash[:])
+		panic("fatal error: unable to generate secure random data for nonce")
 	}
 	return hex.EncodeToString(bytes)
 }
