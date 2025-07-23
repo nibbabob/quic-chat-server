@@ -1,4 +1,4 @@
-module hello-world
+module quic-chat-server
 
 go 1.24.4
 
@@ -6,8 +6,6 @@ require (
 	github.com/quic-go/quic-go v0.54.0
 	golang.org/x/net v0.42.0 // indirect
 )
-
-require golang.org/x/term v0.33.0
 
 require (
 	go.uber.org/mock v0.5.0 // indirect
