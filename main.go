@@ -69,12 +69,12 @@ func initializeSecureEnvironment() {
 	}
 
 	// Set process name obfuscation (operational security)
-	if serverConfig.OPSEC.EnableProcessObfuscation {
+	if serverConfig != nil && serverConfig.OPSEC.EnableProcessObfuscation {
 		security.SetProcessName("kthreadd") // Disguise as a common kernel thread
 	}
 
 	// Clear environment variables that might leak information
-	if serverConfig.OPSEC.ClearEnvironmentVars {
+	if serverConfig != nil && serverConfig.OPSEC.ClearEnvironmentVars {
 		security.ClearEnvVars()
 	}
 }
@@ -83,6 +83,12 @@ func initializeSecureSubsystems() {
 	// Initialize server state with secure defaults
 	handlers.InitializeServer(serverConfig)
 	messaging.InitializeServer(serverConfig)
+
+	// Set the HMAC secret for the messaging system
+	if serverConfig.Security.HMACSecret == "" {
+		logger.Fatal("HMAC_SECRET is not set. This is a critical security vulnerability.", nil)
+	}
+	messaging.SetHMACSecret([]byte(serverConfig.Security.HMACSecret))
 
 	// Connect messaging to handlers
 	messaging.SetServer(handlers.GetServer())

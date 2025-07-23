@@ -73,9 +73,10 @@ cat > test-config.json << 'EOF'
     "max_users_per_room": 4
   },
   "security": {
-    "require_client_authentication": false,
+    "require_client_authentication": true,
     "enable_perfect_forward_secrecy": true,
-    "rate_limit_messages_per_minute": 30
+    "rate_limit_messages_per_minute": 30,
+	"hmac_secret": "a-secure-secret-for-hmac-should-be-generated-and-long"
   },
   "crypto": {
     "use_ecdsa_instead_of_rsa": true,

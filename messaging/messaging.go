@@ -25,7 +25,7 @@ var (
 	shutdownChan      = make(chan struct{})
 	userSequence      = make(map[string]uint64)
 	userSequenceMutex sync.Mutex
-	hmacSecret        = []byte("a-very-secret-key-that-should-be-loaded-from-a-secure-location") // TODO: Load from secure config
+	hmacSecret        []byte
 )
 
 // InitializeServer initializes the messaging subsystem
@@ -38,6 +38,12 @@ func InitializeServer(cfg *config.Config) {
 		"rate_limit":       cfg.Security.RateLimitMessagesPerMinute,
 		"forward_secrecy":  cfg.Security.EnablePerfectForwardSecrecy,
 	})
+}
+
+// SetHMACSecret sets the HMAC secret for message integrity checks.
+// This should be called once during initialization.
+func SetHMACSecret(secret []byte) {
+	hmacSecret = secret
 }
 
 // BroadcastEncryptedMessageToRoom handles E2EE message delivery with security validation
@@ -480,11 +486,7 @@ func isValidSequence(sequence uint64, author string) bool {
 	userSequenceMutex.Lock()
 	defer userSequenceMutex.Unlock()
 	lastSequence, ok := userSequence[author]
-	if !ok {
-		userSequence[author] = sequence
-		return true
-	}
-	if sequence > lastSequence {
+	if !ok || sequence > lastSequence {
 		userSequence[author] = sequence
 		return true
 	}

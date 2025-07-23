@@ -22,18 +22,19 @@ type ServerConfig struct {
 }
 
 type SecurityConfig struct {
-	MaxIdleTimeout              int   `json:"max_idle_timeout_seconds"`
-	KeepAliveInterval           int   `json:"keep_alive_interval_seconds"`
-	MaxStreamsPerConnection     int   `json:"max_streams_per_connection"`
-	MaxUniStreamsPerConnection  int   `json:"max_uni_streams_per_connection"`
-	RateLimitMessagesPerMinute  int   `json:"rate_limit_messages_per_minute"`
-	RateLimitBytesPerMinute     int64 `json:"rate_limit_bytes_per_minute"`
-	MaxMessageSize              int   `json:"max_message_size_bytes"`
-	RequireClientAuth           bool  `json:"require_client_authentication"`
-	EnablePerfectForwardSecrecy bool  `json:"enable_perfect_forward_secrecy"`
-	AntiReplayWindowSize        int   `json:"anti_replay_window_size"`
-	MaxFailedAuthAttempts       int   `json:"max_failed_auth_attempts"`
-	AuthBanDurationMinutes      int   `json:"auth_ban_duration_minutes"`
+	MaxIdleTimeout              int    `json:"max_idle_timeout_seconds"`
+	KeepAliveInterval           int    `json:"keep_alive_interval_seconds"`
+	MaxStreamsPerConnection     int    `json:"max_streams_per_connection"`
+	MaxUniStreamsPerConnection  int    `json:"max_uni_streams_per_connection"`
+	RateLimitMessagesPerMinute  int    `json:"rate_limit_messages_per_minute"`
+	RateLimitBytesPerMinute     int64  `json:"rate_limit_bytes_per_minute"`
+	MaxMessageSize              int    `json:"max_message_size_bytes"`
+	RequireClientAuth           bool   `json:"require_client_authentication"`
+	EnablePerfectForwardSecrecy bool   `json:"enable_perfect_forward_secrecy"`
+	AntiReplayWindowSize        int    `json:"anti_replay_window_size"`
+	MaxFailedAuthAttempts       int    `json:"max_failed_auth_attempts"`
+	AuthBanDurationMinutes      int    `json:"auth_ban_duration_minutes"`
+	HMACSecret                  string `json:"hmac_secret"`
 }
 
 type CryptoConfig struct {
@@ -137,7 +138,7 @@ func getSecureDefaults() *Config {
 			MetricsRetentionHours:   24,     // Short retention for privacy
 			LogLevel:                "WARN", // Minimal logging for OPSEC
 			EnableSecurityAuditing:  true,
-			AuditLogPath:            "/tmp/audit.log",
+			AuditLogPath:            "/var/log/secure-messaging/audit.log",
 			MaxLogFileSizeMB:        10, // Small log files
 			LogRotationIntervalDays: 1,  // Daily rotation
 			HealthEndpoint:          "/sys/status",
@@ -171,6 +172,9 @@ func overrideWithEnvironment(config *Config) {
 	// Security overrides
 	if logLevel := os.Getenv("SECURE_LOG_LEVEL"); logLevel != "" {
 		config.Monitoring.LogLevel = logLevel
+	}
+	if hmacSecret := os.Getenv("HMAC_SECRET"); hmacSecret != "" {
+		config.Security.HMACSecret = hmacSecret
 	}
 
 	// Certificate path overrides (for custom deployment)
