@@ -516,7 +516,7 @@ func getKeyStrength(cert *tls.Certificate) string {
 	case *rsa.PublicKey:
 		return fmt.Sprintf("%d-bit", pub.N.BitLen())
 	case *ecdsa.PublicKey:
-		return fmt.Sprintf("%s", pub.Curve.Params().Name)
+		return pub.Curve.Params().Name
 	default:
 		return "unknown"
 	}
