@@ -9,6 +9,7 @@ echo     🔒 ULTRA-SECURE WHISTLEBLOWER COMMUNICATION SYSTEM
 echo        Intelligence Agency Protection Grade
 echo ================================================================
 echo.
+
 REM Check if Go is installed
 go version >nul 2>&1
 if errorlevel 1 (
@@ -16,6 +17,13 @@ if errorlevel 1 (
     pause
     exit /b 1
 )
+
+REM Create certs directory if it doesn't exist
+if not exist "certs" (
+    echo 🔧 Creating certs directory...
+    mkdir certs
+)
+
 
 echo 🔧 Building secure components...
 echo.
@@ -48,34 +56,52 @@ if errorlevel 1 (
 echo ✅ Client built successfully
 cd ..
 
+REM Generate secure secrets
+echo 🔑 Generating secure HMAC_SECRET and IP_HASH_SALT...
+for /f "tokens=*" %%a in ('powershell -Command "-join ((0..63) | ForEach-Object { '{0:x}' -f (Get-Random -Minimum 0 -Maximum 16) })"') do set "HMAC_SECRET=%%a"
+for /f "tokens=*" %%a in ('powershell -Command "-join ((0..63) | ForEach-Object { '{0:x}' -f (Get-Random -Minimum 0 -Maximum 16) })"') do set "IP_HASH_SALT=%%a"
+
+if not defined HMAC_SECRET (
+    echo ❌ Failed to generate HMAC_SECRET.
+    pause
+    exit /b 1
+)
+if not defined IP_HASH_SALT (
+    echo ❌ Failed to generate IP_HASH_SALT.
+    pause
+    exit /b 1
+)
+echo ✅ Secure secrets generated.
+
 REM Create test configuration
 echo ⚙️  Creating test configuration...
 (
-echo {
-echo   "server": {
-echo     "port": "4433",
-echo     "max_connections": 10,
-echo     "max_rooms_per_server": 5,
-echo     "max_users_per_room": 4
-echo   },
-echo   "security": {
-echo     "require_client_authentication": true,
-echo     "enable_perfect_forward_secrecy": true,
-echo     "rate_limit_messages_per_minute": 30
-echo   },
-echo   "crypto": {
- "use_ecdsa_instead_of_rsa": true,
-echo     "ecdsa_curve": "P-384"
-echo   },
-echo   "monitoring": {
-echo     "health_port": "8080",
-echo     "log_level": "INFO"
-echo   },
-echo   "opsec": {
-echo     "enable_memory_protection": true,
-echo     "clear_environment_variables": false
-echo   }
-echo }
+    echo {
+    echo   "server": {
+    echo     "port": "4433",
+    echo     "max_connections": 10,
+    echo     "max_rooms_per_server": 5,
+    echo     "max_users_per_room": 4
+    echo   },
+    echo   "security": {
+    echo     "require_client_authentication": false,
+    echo     "enable_perfect_forward_secrecy": true,
+    echo     "rate_limit_messages_per_minute": 30,
+    echo     "hmac_secret": "%HMAC_SECRET%"
+    echo   },
+    echo   "crypto": {
+    echo     "use_ecdsa_instead_of_rsa": true,
+    echo     "ecdsa_curve": "P-384"
+    echo   },
+    echo   "monitoring": {
+    echo     "health_port": "8080",
+    echo     "log_level": "INFO"
+    echo   },
+    echo   "opsec": {
+    echo     "enable_memory_protection": true,
+    echo     "clear_environment_variables": false
+    echo   }
+    echo }
 ) > test-config.json
 
 echo ✅ Configuration created
@@ -83,6 +109,7 @@ echo.
 REM Start server
 echo 🚀 Starting secure server...
 set SECURE_CONFIG_PATH=test-config.json
+set IP_HASH_SALT=%IP_HASH_SALT%
 start "Secure Server" secure-server.exe
 
 REM Wait for server to start
@@ -98,7 +125,7 @@ echo ================================================================
 echo.
 echo  1. Open TWO new Command Prompt windows
 echo  2. In first window:  cd client ^&^& secure-client.exe
-echo  3. In second window: cd client ^&^& secure-client.exe
+echo  3. In second window: cd client ^&^& secure-client.exe  
 echo  4. Use same room name in both clients
 echo  5. Start chatting securely!
 echo.

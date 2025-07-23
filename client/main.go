@@ -157,7 +157,7 @@ func main() {
 func displaySecurityBanner() {
 	fmt.Printf("%s%s╔══════════════════════════════════════════╗%s\n", colorBold, colorCyan, colorReset)
 	fmt.Printf("%s%s║     🔒 ULTRA-SECURE MESSAGING CLIENT     ║%s\n", colorBold, colorCyan, colorReset)
-	fmt.Printf("%s%s║        Intelligence Agency Protection     ║%s\n", colorBold, colorCyan, colorReset)
+	fmt.Printf("%s%s║        Intelligence Agency Protection    ║%s\n", colorBold, colorCyan, colorReset)
 	fmt.Printf("%s%s║                                          ║%s\n", colorBold, colorCyan, colorReset)
 	fmt.Printf("%s%s║  🛡️  End-to-End Encryption               ║%s\n", colorBold, colorGreen, colorReset)
 	fmt.Printf("%s%s║  🔐  Perfect Forward Secrecy             ║%s\n", colorBold, colorGreen, colorReset)
