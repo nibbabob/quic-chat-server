@@ -95,6 +95,9 @@ func initializeSecureSubsystems() {
 	// Connect messaging to handlers
 	messaging.SetServer(handlers.GetServer())
 
+	// Initialize monitoring FIRST, as other subsystems may rely on it
+	monitoring.InitializeMonitoring()
+
 	// Initialize security monitoring
 	security.InitializeSecurityMonitor(serverConfig)
 

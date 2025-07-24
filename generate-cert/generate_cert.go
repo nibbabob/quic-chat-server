@@ -6,24 +6,31 @@ import (
 	"crypto/x509"
 	"crypto/x509/pkix"
 	"encoding/pem"
+	"fmt"
 	"log"
 	"math/big"
 	"os"
 	"time"
 )
 
-func main() {
+// Hoist crypto functions into variables to allow for mocking in tests.
+var (
+	rsaGenerateKey        = rsa.GenerateKey
+	x509CreateCertificate = x509.CreateCertificate
+)
+
+// generateCertificate creates a new self-signed certificate and private key.
+// It returns the PEM-encoded certificate and key, or an error.
+func generateCertificate() (certPEM, keyPEM []byte, err error) {
 	// Generate RSA key
-	privateKey, err := rsa.GenerateKey(rand.Reader, 2048)
+	privateKey, err := rsaGenerateKey(rand.Reader, 2048)
 	if err != nil {
-		log.Fatalf("Failed to generate private key: %v", err)
+		return nil, nil, fmt.Errorf("failed to generate private key: %w", err)
 	}
 
 	// Create a self-signed certificate template
 	template := x509.Certificate{
 		SerialNumber: big.NewInt(1),
-		// Common Name (CN) is important for browsers/clients to trust the certificate for 'localhost'
-		// For actual domains, this would be your domain name (e.g., "example.com")
 		Subject: pkix.Name{
 			Organization: []string{"Acme Co"},
 			CommonName:   "localhost",
@@ -38,34 +45,41 @@ func main() {
 	}
 
 	// Create certificate
-	certDER, err := x509.CreateCertificate(rand.Reader, &template, &template, &privateKey.PublicKey, privateKey)
+	certDER, err := x509CreateCertificate(rand.Reader, &template, &template, &privateKey.PublicKey, privateKey)
 	if err != nil {
-		log.Fatalf("Failed to create certificate: %v", err)
+		return nil, nil, fmt.Errorf("failed to create certificate: %w", err)
+	}
+
+	// Encode certificate to PEM format
+	certPEM = pem.EncodeToMemory(&pem.Block{Type: "CERTIFICATE", Bytes: certDER})
+	if certPEM == nil {
+		return nil, nil, fmt.Errorf("failed to encode certificate to PEM")
+	}
+
+	// Encode private key to PEM format
+	keyPEM = pem.EncodeToMemory(&pem.Block{Type: "RSA PRIVATE KEY", Bytes: x509.MarshalPKCS1PrivateKey(privateKey)})
+	if keyPEM == nil {
+		return nil, nil, fmt.Errorf("failed to encode private key to PEM")
+	}
+
+	return certPEM, keyPEM, nil
+}
+
+func main() {
+	certPEM, keyPEM, err := generateCertificate()
+	if err != nil {
+		log.Fatalf("Failed to generate certificate: %v", err)
 	}
 
 	// Write cert.pem
-	certOut, err := os.Create("cert.pem")
-	if err != nil {
-		log.Fatalf("Failed to open cert.pem for writing: %v", err)
-	}
-	if err := pem.Encode(certOut, &pem.Block{Type: "CERTIFICATE", Bytes: certDER}); err != nil {
-		log.Fatalf("Failed to write data to cert.pem: %v", err)
-	}
-	if err := certOut.Close(); err != nil {
-		log.Fatalf("Error closing cert.pem: %v", err)
+	if err := os.WriteFile("cert.pem", certPEM, 0644); err != nil {
+		log.Fatalf("Failed to write cert.pem: %v", err)
 	}
 	log.Println("Generated cert.pem")
 
 	// Write key.pem
-	keyOut, err := os.OpenFile("key.pem", os.O_WRONLY|os.O_CREATE|os.O_TRUNC, 0600)
-	if err != nil {
-		log.Fatalf("Failed to open key.pem for writing: %v", err)
-	}
-	if err := pem.Encode(keyOut, &pem.Block{Type: "RSA PRIVATE KEY", Bytes: x509.MarshalPKCS1PrivateKey(privateKey)}); err != nil {
-		log.Fatalf("Failed to write data to key.pem: %v", err)
-	}
-	if err := keyOut.Close(); err != nil {
-		log.Fatalf("Error closing key.pem: %v", err)
+	if err := os.WriteFile("key.pem", keyPEM, 0600); err != nil {
+		log.Fatalf("Failed to write key.pem: %v", err)
 	}
 	log.Println("Generated key.pem")
 }
