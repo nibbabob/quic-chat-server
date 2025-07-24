@@ -2,7 +2,7 @@ package messaging
 
 import (
 	"context"
-	"errors"
+	"io"
 	"net"
 	"quic-chat-server/config"
 	"quic-chat-server/types"
@@ -23,7 +23,7 @@ func (m *MockStream) Read(p []byte) (n int, err error) {
 	m.Lock()
 	defer m.Unlock()
 	if len(m.ReadBuffer) == 0 {
-		return 0, errors.New("mock stream read error")
+		return 0, io.EOF
 	}
 	n = copy(p, m.ReadBuffer)
 	m.ReadBuffer = m.ReadBuffer[n:]
@@ -43,11 +43,21 @@ func (m *MockStream) Close() error {
 }
 func (m *MockStream) SetDeadline(t time.Time) error { return nil }
 
+// ADD THE MISSING Context METHOD
+func (m *MockStream) Context() context.Context {
+	return context.Background()
+}
+
 // MockConnection provides a mock implementation of the types.Connection interface for testing.
 type MockConnection struct {
 	sync.Mutex
 	LastStream      *MockStream
 	OpenStreamError error
+}
+
+// ADD THE MISSING AcceptStream METHOD
+func (m *MockConnection) AcceptStream(ctx context.Context) (types.Stream, error) {
+	return &MockStream{}, nil
 }
 
 func (m *MockConnection) OpenStreamSync(ctx context.Context) (types.Stream, error) {

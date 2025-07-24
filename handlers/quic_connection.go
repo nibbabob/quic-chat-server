@@ -7,7 +7,7 @@ import (
 	"quic-chat-server/types"
 	"time"
 
-	"github.com/quic-go/quic-go"
+	"github.com/quic-go/quic-go" // <-- ADD THIS IMPORT
 )
 
 // QUICConnection is a concrete implementation of the types.Connection interface for QUIC.
@@ -16,8 +16,12 @@ type QUICConnection struct {
 }
 
 // NewQUICConnection creates a new wrapper around a quic.Connection.
-func NewQUICConnection(conn *quic.Conn) *QUICConnection {
+func NewQUICConnection(conn *quic.Conn) types.Connection {
 	return &QUICConnection{qConn: conn}
+}
+
+func (c *QUICConnection) AcceptStream(ctx context.Context) (types.Stream, error) {
+	return c.qConn.AcceptStream(ctx)
 }
 
 // OpenStreamSync opens a new synchronous QUIC stream.
@@ -44,7 +48,6 @@ func (c *QUICConnection) RemoteAddr() net.Addr {
 }
 
 // CloseWithError closes the connection with an application error code.
-// The method has been renamed from "Close" to "CloseWithError" to match the interface.
 func (c *QUICConnection) CloseWithError(code uint64, reason string) error {
 	return c.qConn.CloseWithError(quic.ApplicationErrorCode(code), reason)
 }

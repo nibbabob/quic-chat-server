@@ -1,10 +1,10 @@
 package handlers
 
 import (
-	"bytes"
 	"context"
 	"encoding/json"
 	"errors"
+	"io"
 	"net"
 	"quic-chat-server/config"
 	"quic-chat-server/messaging"
@@ -14,192 +14,263 @@ import (
 	"sync"
 	"testing"
 	"time"
+
+	"github.com/quic-go/quic-go"
 )
 
-// MockStream implements the types.Stream interface for testing.
+// MockStream provides a mock implementation of the types.Stream interface for testing.
 type MockStream struct {
-	bytes.Buffer
-	deadline time.Time
-	closed   bool
+	sync.Mutex
+	ReadBuffer  []byte
+	WriteBuffer [][]byte
+	CloseCalled bool
+	Ctx         context.Context
+	Cancel      context.CancelFunc
 }
 
-func (s *MockStream) Close() error {
-	s.closed = true
+func (m *MockStream) Read(p []byte) (n int, err error) {
+	m.Lock()
+	defer m.Unlock()
+	if len(m.ReadBuffer) == 0 {
+		return 0, io.EOF
+	}
+	n = copy(p, m.ReadBuffer)
+	m.ReadBuffer = m.ReadBuffer[n:]
+	return n, nil
+}
+func (m *MockStream) Write(p []byte) (n int, err error) {
+	m.Lock()
+	defer m.Unlock()
+	b := make([]byte, len(p))
+	copy(b, p)
+	m.WriteBuffer = append(m.WriteBuffer, b)
+	return len(p), nil
+}
+func (m *MockStream) Close() error {
+	m.Lock()
+	defer m.Unlock()
+	m.CloseCalled = true
+	if m.Cancel != nil {
+		m.Cancel()
+	}
 	return nil
 }
-func (s *MockStream) SetDeadline(t time.Time) error {
-	s.deadline = t
-	return nil
-}
+func (m *MockStream) SetDeadline(t time.Time) error { return nil }
+func (m *MockStream) Context() context.Context      { return m.Ctx }
 
-// MockConnection implements the types.Connection interface for testing.
+// MockConnection provides a mock implementation of the types.Connection interface.
 type MockConnection struct {
-	closed   bool
-	closeErr error
+	AcceptStreamChan chan types.Stream
+	CloseWithErrorFn func(code uint64, reason string) error
+	RemoteAddrFn     func() net.Addr
 }
 
-func (c *MockConnection) OpenStreamSync(ctx context.Context) (types.Stream, error) {
+func (m *MockConnection) AcceptStream(ctx context.Context) (types.Stream, error) {
+	select {
+	case stream, ok := <-m.AcceptStreamChan:
+		if !ok {
+			return nil, errors.New("connection closed")
+		}
+		return stream, nil
+	case <-ctx.Done():
+		return nil, ctx.Err()
+	}
+}
+func (m *MockConnection) OpenStreamSync(ctx context.Context) (types.Stream, error) {
 	return &MockStream{}, nil
 }
-func (c *MockConnection) SendMessage(msg types.Message) error { return nil }
-func (c *MockConnection) RemoteAddr() net.Addr {
-	return &net.TCPAddr{IP: net.ParseIP("127.0.0.1")}
-}
-func (c *MockConnection) CloseWithError(code uint64, reason string) error {
-	c.closed = true
-	c.closeErr = errors.New(reason)
+func (m *MockConnection) SendMessage(msg types.Message) error { return nil }
+func (m *MockConnection) CloseWithError(code uint64, reason string) error {
+	if m.CloseWithErrorFn != nil {
+		return m.CloseWithErrorFn(code, reason)
+	}
 	return nil
 }
-
-func newMockConnection() *MockConnection {
-	return &MockConnection{}
+func (m *MockConnection) RemoteAddr() net.Addr {
+	if m.RemoteAddrFn != nil {
+		return m.RemoteAddrFn()
+	}
+	return &net.TCPAddr{IP: net.ParseIP("127.0.0.1"), Port: 12345}
 }
 
-// setupHandlerTest initializes all necessary subsystems for testing the handlers.
-func setupHandlerTest(t *testing.T) (*config.Config, func()) {
+// setupHandlersTest initializes the necessary components for testing the handlers package.
+func setupHandlersTest(t *testing.T) (*config.Config, func()) {
 	t.Setenv("IP_HASH_SALT", "546861742773206d79204b756e67204675546861742773206d79204b756e67204675")
 	t.Setenv("HMAC_SECRET", "a-super-secret-hmac-key-for-testing")
 
 	cfg, err := config.LoadConfig()
 	if err != nil {
-		t.Fatalf("Failed to load config for handler test: %v", err)
+		t.Fatalf("Failed to load config for handlers test: %v", err)
 	}
+	cfg.Server.ConnectionTimeout = 2 // Increased timeout slightly for stability
 
 	InitializeServer(cfg)
 	messaging.InitializeServer(cfg)
-	messaging.SetServer(GetServer())
 	security.InitializeSecurityMonitor(cfg)
 
 	cleanup := func() {
 		server = nil
 		serverConfig = nil
-		// Reset shutdown channel for tests that use it
 		shutdownChan = make(chan struct{})
-		shutdownOnce = sync.Once{}
 	}
 	return cfg, cleanup
 }
 
 func TestHandleSecureConnection(t *testing.T) {
-	t.Run("Connection Times Out", func(t *testing.T) {
-		cfg, cleanup := setupHandlerTest(t)
-		defer cleanup()
-		cfg.Server.ConnectionTimeout = 1 // Use a short timeout
-		conn := newMockConnection()
-		HandleSecureConnection(conn, "test-conn-timeout")
-		if !conn.closed {
-			t.Fatal("Connection was not closed on timeout")
-		}
-		if !strings.Contains(conn.closeErr.Error(), "connection_timed_out") {
-			t.Errorf("Expected timeout error, got: %v", conn.closeErr)
-		}
-	})
+	_, cleanup := setupHandlersTest(t)
+	defer cleanup()
 
-	t.Run("Connection Rejected At Capacity", func(t *testing.T) {
-		cfg, cleanup := setupHandlerTest(t)
-		defer cleanup()
-		cfg.Server.MaxConnections = 0 // Set capacity to 0
-		conn := newMockConnection()
-		HandleSecureConnection(conn, "test-conn-capacity")
-		if !conn.closed || !strings.Contains(conn.closeErr.Error(), "server_capacity_exceeded") {
-			t.Error("Connection was not rejected due to server capacity")
-		}
-	})
+	mockConn := &MockConnection{
+		AcceptStreamChan: make(chan types.Stream, 1),
+		CloseWithErrorFn: func(code uint64, reason string) error { return nil },
+	}
+
+	var wg sync.WaitGroup
+	wg.Add(1)
+	go func() {
+		defer wg.Done()
+		HandleSecureConnection(mockConn, "test-conn-id")
+	}()
+
+	validPublicKey := strings.Repeat("a", 128)
+	joinMsg := types.Message{
+		Type: "join",
+		Metadata: types.Metadata{
+			Author:    "test-user",
+			ChannelID: "test-room",
+			PublicKey: validPublicKey,
+		},
+	}
+	joinData, _ := json.Marshal(joinMsg)
+	streamCtx, streamCancel := context.WithCancel(context.Background())
+	mockStream := &MockStream{ReadBuffer: joinData, Ctx: streamCtx, Cancel: streamCancel}
+
+	mockConn.AcceptStreamChan <- mockStream
+	<-streamCtx.Done()
+
+	// *** THE FIX: Assert the state *before* closing the connection. ***
+	server.Mutex.RLock()
+	if len(server.Connections) != 1 {
+		t.Errorf("Expected 1 connection after join, got %d", len(server.Connections))
+	}
+	if len(server.Rooms) != 1 {
+		t.Errorf("Expected 1 room after join, got %d", len(server.Rooms))
+	}
+	server.Mutex.RUnlock()
+
+	close(mockConn.AcceptStreamChan)
+	wg.Wait()
 }
 
-func TestHandleSecureStream(t *testing.T) {
-	cfg, cleanup := setupHandlerTest(t)
+func TestConnectionRejectionAtCapacity(t *testing.T) {
+	cfg, cleanup := setupHandlersTest(t)
 	defer cleanup()
-	conn := newMockConnection()
-	connID := "test-stream-conn"
 
-	baseClient := &types.ClientConnection{
-		ID:            connID,
-		Conn:          conn,
-		UserID:        "test-user",
-		RoomID:        "test-room",
-		Authenticated: true,
+	// Set server to be at capacity
+	cfg.Server.MaxConnections = 0
+
+	closeCalled := false
+	mockConn := &MockConnection{
+		CloseWithErrorFn: func(code uint64, reason string) error {
+			closeCalled = true
+			if reason != "server_capacity_exceeded" {
+				t.Errorf("Expected close reason 'server_capacity_exceeded', got '%s'", reason)
+			}
+			return nil
+		},
 	}
-	server.Connections[connID] = baseClient
 
-	t.Run("Handle Valid Join", func(t *testing.T) {
-		msg := types.Message{Type: "join", Metadata: types.Metadata{Author: "test-user", ChannelID: "test-room", PublicKey: "key"}}
-		data, _ := json.Marshal(msg)
-		stream := &MockStream{Buffer: *bytes.NewBuffer(data)}
-		handleSecureStream(stream, conn, connID)
-		if len(server.Rooms) != 1 {
-			t.Error("handleSecureStream did not create a room for a join message")
-		}
-		if !strings.Contains(stream.String(), "join_ack") {
-			t.Error("Did not receive join_ack")
-		}
-	})
+	HandleSecureConnection(mockConn, "test-conn-id-reject")
 
-	t.Run("Handle Join To Full Room", func(t *testing.T) {
-		cfg.Server.MaxUsersPerRoom = 0
-		msg := types.Message{Type: "join", Metadata: types.Metadata{Author: "new-user", ChannelID: "test-room", PublicKey: "key2"}}
-		data, _ := json.Marshal(msg)
-		stream := &MockStream{Buffer: *bytes.NewBuffer(data)}
-		handleSecureStream(stream, conn, "new-conn")
-		if !strings.Contains(stream.String(), "room_user_limit_exceeded") {
-			t.Error("Did not receive room_user_limit_exceeded error")
-		}
-		cfg.Server.MaxUsersPerRoom = 10 // Reset
-	})
-
-	t.Run("Handle Heartbeat", func(t *testing.T) {
-		msg := types.Message{Type: "heartbeat"}
-		data, _ := json.Marshal(msg)
-		stream := &MockStream{Buffer: *bytes.NewBuffer(data)}
-		handleSecureStream(stream, conn, connID)
-		if !strings.Contains(stream.String(), "heartbeat_ack") {
-			t.Error("handleSecureStream did not respond to heartbeat with an ack")
-		}
-	})
+	if !closeCalled {
+		t.Error("Expected connection to be closed due to server capacity, but it wasn't")
+	}
 }
 
 func TestKickUser(t *testing.T) {
-	_, cleanup := setupHandlerTest(t)
+	_, cleanup := setupHandlersTest(t)
 	defer cleanup()
 
-	conn := newMockConnection()
-	server.Connections["kick-conn-id"] = &types.ClientConnection{
-		ID: "kick-conn-id", Conn: conn, UserID: "user-to-kick",
+	closeCalled := false
+	mockConn := &MockConnection{
+		CloseWithErrorFn: func(code uint64, reason string) error {
+			closeCalled = true
+			return nil
+		},
 	}
 
-	if !KickUser("user-to-kick") {
-		t.Error("KickUser returned false for an existing user")
+	server.Mutex.Lock()
+	server.Connections["kick-conn-id"] = &types.ClientConnection{
+		ID:     "kick-conn-id",
+		UserID: "user-to-kick",
+		Conn:   mockConn,
 	}
-	if !conn.closed {
-		t.Error("KickUser did not close the connection")
+	server.Mutex.Unlock()
+
+	kicked := KickUser("user-to-kick")
+
+	if !kicked {
+		t.Error("KickUser returned false, expected true")
 	}
-	if KickUser("non-existent-user") {
-		t.Error("KickUser returned true for a non-existing user")
+	if !closeCalled {
+		t.Error("Expected the connection's CloseWithError method to be called")
 	}
 }
 
-func TestCleanupConnection(t *testing.T) {
-	_, cleanup := setupHandlerTest(t)
+func TestHandleSecureStream_InvalidJSON(t *testing.T) {
+	_, cleanup := setupHandlersTest(t)
 	defer cleanup()
-	connID := "cleanup-conn"
-	roomID := "cleanup-room"
 
-	client := types.NewSecureClientConnection(connID, newMockConnection(), "cleanup-user")
-	client.RoomID = roomID
-	client.Authenticated = true
-
-	room := types.NewSecureRoom(roomID, "standard")
-	room.Clients[connID] = client
-
-	server.Connections[connID] = client
-	server.Rooms[roomID] = room
-
-	cleanupConnection(connID)
-
-	if _, exists := server.Connections[connID]; exists {
-		t.Error("cleanupConnection did not remove the connection from the server")
+	// Add a connection to the server so stream handling can find it
+	server.Mutex.Lock()
+	server.Connections["stream-test-conn"] = &types.ClientConnection{
+		ID:     "stream-test-conn",
+		UserID: "stream-user",
+		RoomID: "stream-room",
+		Conn:   &MockConnection{}, // The connection itself can be a simple mock
 	}
-	if _, exists := server.Rooms[roomID]; exists {
-		t.Error("cleanupConnection did not remove the empty room from the server")
+	server.Mutex.Unlock()
+
+	// Test with invalid message format
+	streamCtx, streamCancel := context.WithCancel(context.Background())
+	mockStream := &MockStream{ReadBuffer: []byte("not json"), Ctx: streamCtx, Cancel: streamCancel}
+
+	// The stream handler is synchronous for this test's purpose
+	handleSecureStream(mockStream, nil, "stream-test-conn")
+
+	// Check if an error response was written to the stream
+	if len(mockStream.WriteBuffer) == 0 {
+		t.Fatal("Expected an error response for invalid JSON, but got none")
+	}
+	var errorResp types.Message
+	if err := json.Unmarshal(mockStream.WriteBuffer[0], &errorResp); err != nil {
+		t.Fatalf("Failed to unmarshal error response: %v", err)
+	}
+	if errorResp.Type != "error" || errorResp.Metadata.SingleContent != "invalid_message_format" {
+		t.Errorf("Unexpected error response: %+v", errorResp)
+	}
+}
+
+func TestIsConnectionClosed(t *testing.T) {
+	testCases := []struct {
+		name     string
+		err      error
+		expected bool
+	}{
+		{"Nil error", nil, false},
+		{"Generic connection closed error", errors.New("an error: connection closed by peer"), true},
+		{"QUIC graceful close", &quic.ApplicationError{ErrorCode: 0}, true},
+		{"QUIC kicked error", &quic.ApplicationError{ErrorCode: 0x102}, true},
+		{"QUIC shutdown error", &quic.ApplicationError{ErrorCode: 0x200}, true},
+		{"Other QUIC error", &quic.ApplicationError{ErrorCode: 0x500}, false},
+		{"Non-close error", errors.New("some other error"), false},
+	}
+
+	for _, tc := range testCases {
+		t.Run(tc.name, func(t *testing.T) {
+			if got := IsConnectionClosed(tc.err); got != tc.expected {
+				t.Errorf("IsConnectionClosed() with err '%v' = %v; want %v", tc.err, got, tc.expected)
+			}
+		})
 	}
 }

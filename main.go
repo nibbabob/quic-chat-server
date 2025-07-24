@@ -192,7 +192,7 @@ func startSecureServer() {
 		})
 
 		// Handle connection in isolated goroutine
-		go handlers.HandleSecureConnection(conn, connID)
+		go handlers.HandleSecureConnection(handlers.NewQUICConnection(conn), connID)
 	}
 }
 
