@@ -4,8 +4,6 @@ import (
 	"quic-chat-server/utils"
 	"sync"
 	"time"
-
-	"github.com/quic-go/quic-go"
 )
 
 // Message structures for end-to-end encrypted messaging with enhanced security
@@ -80,7 +78,7 @@ type Server struct {
 type ClientConnection struct {
 	// Basic connection info
 	ID     string
-	Conn   *quic.Conn
+	Conn   Connection
 	UserID string
 	RoomID string
 
@@ -464,7 +462,7 @@ func NewSecureRoom(roomID string, securityLevel string) *Room {
 	}
 }
 
-func NewSecureClientConnection(connID string, conn *quic.Conn, userID string) *ClientConnection {
+func NewSecureClientConnection(connID string, conn Connection, userID string) *ClientConnection {
 	now := time.Now()
 	return &ClientConnection{
 		ID:            connID,

@@ -236,7 +236,7 @@ func handleSecureJoin(_ context.Context, stream *quic.Stream, conn *quic.Conn, c
 	// Create client connection
 	client := &types.ClientConnection{
 		ID:            connID,
-		Conn:          conn,
+		Conn:          NewQUICConnection(conn),
 		UserID:        msg.Metadata.Author,
 		RoomID:        msg.Metadata.ChannelID,
 		PublicKey:     msg.Metadata.PublicKey,

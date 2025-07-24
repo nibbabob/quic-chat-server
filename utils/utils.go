@@ -6,15 +6,19 @@ import (
 	"crypto/subtle"
 	"encoding/hex"
 	"fmt"
+	"io" // Import the io package
 	"log"
 	"time"
 )
 
+// Allow the reader to be replaced for testing
+var secureReader io.Reader = rand.Reader
+
 // GenerateSecureID generates a cryptographically secure ID
 func GenerateSecureID() string {
 	bytes := make([]byte, 16)
-	if _, err := rand.Read(bytes); err != nil {
-		// This should never happen on a modern OS, but if it does, it's a critical failure.
+	// Use the injectable reader
+	if _, err := secureReader.Read(bytes); err != nil {
 		log.Fatalf("Fatal error: unable to generate secure random data: %v", err)
 	}
 	return hex.EncodeToString(bytes)
@@ -23,7 +27,8 @@ func GenerateSecureID() string {
 // GenerateNonce generates a cryptographic nonce
 func GenerateNonce() string {
 	bytes := make([]byte, 32) // 256-bit nonce
-	if _, err := rand.Read(bytes); err != nil {
+	// Use the injectable reader
+	if _, err := secureReader.Read(bytes); err != nil {
 		log.Fatalf("Fatal error: unable to generate secure random data for nonce: %v", err)
 	}
 	return hex.EncodeToString(bytes)
@@ -36,7 +41,8 @@ func GenerateToken(length int) string {
 	}
 
 	bytes := make([]byte, length)
-	if _, err := rand.Read(bytes); err != nil {
+	// Use the injectable reader
+	if _, err := secureReader.Read(bytes); err != nil {
 		log.Fatalf("Fatal error: unable to generate secure random data for token: %v", err)
 	}
 
@@ -121,7 +127,8 @@ func GenerateFingerprint(publicKey []byte) string {
 // SecureRandom generates cryptographically secure random bytes
 func SecureRandom(length int) ([]byte, error) {
 	bytes := make([]byte, length)
-	_, err := rand.Read(bytes)
+	// Use the injectable reader
+	_, err := secureReader.Read(bytes)
 	return bytes, err
 }
 
