@@ -74,7 +74,7 @@ func GenerateMaxSecurityTLSConfig(cfg *config.Config) *tls.Config {
 		},
 
 		// Session ticket configuration for forward secrecy
-		SessionTicketsDisabled: !cfg.Security.EnablePerfectForwardSecrecy,
+		SessionTicketsDisabled: cfg.Security.EnablePerfectForwardSecrecy,
 
 		// Disable session resumption if perfect forward secrecy is required
 		ClientSessionCache: getSessionCache(cfg),
@@ -111,13 +111,15 @@ func GenerateCertIfNotExists() error {
 	}
 
 	log.Println("🔧 Generating new cryptographic materials...")
-	return generateMaxSecurityCertificate()
+	cfg, err := config.LoadConfig()
+	if err != nil {
+		return err
+	}
+	return generateMaxSecurityCertificate(cfg)
 }
 
 // generateMaxSecurityCertificate creates new certificates with maximum security parameters
-func generateMaxSecurityCertificate() error {
-	cfg, _ := config.LoadConfig() // Use default config if loading fails
-
+func generateMaxSecurityCertificate(cfg *config.Config) error {
 	var privateKey interface{}
 	var err error
 
@@ -202,12 +204,12 @@ func generateMaxSecurityCertificate() error {
 	}
 
 	// Write certificate with secure permissions
-	if err := writeCertificate(certDER, "certs/cert.pem"); err != nil {
+	if err := writeCertificate(cfg.Crypto.CertificatePath, certDER); err != nil {
 		return err
 	}
 
 	// Write private key with maximum security
-	if err := writePrivateKey(privateKey, "certs/key.pem"); err != nil {
+	if err := writePrivateKey(privateKey, cfg.Crypto.PrivateKeyPath); err != nil {
 		return err
 	}
 
@@ -262,7 +264,7 @@ func loadOrGenerateCertificate(cfg *config.Config) (*tls.Certificate, error) {
 	}
 
 	// Generate new certificate
-	if err := generateMaxSecurityCertificate(); err != nil {
+	if err := generateMaxSecurityCertificate(cfg); err != nil {
 		return nil, err
 	}
 
@@ -315,7 +317,7 @@ func addSecurityPolicies(template *x509.Certificate) {
 	}
 }
 
-func writeCertificate(certDER []byte, path string) error {
+func writeCertificate(path string, certDER []byte) error {
 	certOut, err := os.OpenFile(path, os.O_WRONLY|os.O_CREATE|os.O_TRUNC, 0644)
 	if err != nil {
 		return err
@@ -449,7 +451,7 @@ func setupKeyRotation(cfg *config.Config) {
 		// For now, this will generate a new certificate, but a server restart is
 		// required to load it.
 
-		if err := generateMaxSecurityCertificate(); err != nil {
+		if err := generateMaxSecurityCertificate(cfg); err != nil {
 			log.Printf("❌ Key rotation failed: %v", err)
 		} else {
 			log.Println("✅ Key rotation completed successfully. A server restart is required to apply the new key.")
