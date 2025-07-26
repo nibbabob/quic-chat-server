@@ -1,6 +1,7 @@
 package security
 
 import (
+	"fmt"
 	"net/http"
 	"quic-chat-server/config"
 	"testing"
@@ -235,4 +236,93 @@ func TestOpsecFunctions(t *testing.T) {
 	SetProcessName("test-process")
 	ClearEnvVars()
 	// No assertions, just checking for panics.
+}
+
+// TestSecurityMonitorCleanup verifies that the cleanup routine correctly removes stale entries.
+func TestSecurityMonitorCleanup(t *testing.T) {
+	_, cleanup := setupSecurityTest(t)
+	defer cleanup()
+
+	now := time.Now()
+
+	// 1. Setup: Populate maps with both old and new data
+	securityMonitor.mutex.Lock()
+	// Failed Auth Attempts
+	securityMonitor.failedAuthAttempts["old_auth"] = &AuthAttempt{LastAttempt: now.Add(-25 * time.Hour)}
+	securityMonitor.failedAuthAttempts["new_auth"] = &AuthAttempt{LastAttempt: now.Add(-1 * time.Hour)}
+
+	// Rate Limiters
+	securityMonitor.rateLimiters["old_rate"] = &RateLimiter{LastMessage: now.Add(-3 * time.Hour)}
+	securityMonitor.rateLimiters["new_rate"] = &RateLimiter{LastMessage: now.Add(-1 * time.Minute)}
+
+	// IP Intelligence
+	securityMonitor.suspiciousIPs["old_ip"] = &IPIntel{LastActivity: now.Add(-49 * time.Hour)}
+	securityMonitor.suspiciousIPs["new_ip"] = &IPIntel{LastActivity: now.Add(-1 * time.Hour)}
+	securityMonitor.mutex.Unlock()
+
+	// 2. Action: Run the cleanup function
+	securityMonitor.cleanup()
+
+	// 3. Assertions: Check that old entries are removed and new ones remain
+	securityMonitor.mutex.RLock()
+	defer securityMonitor.mutex.RUnlock()
+
+	if _, exists := securityMonitor.failedAuthAttempts["old_auth"]; exists {
+		t.Error("Old failed auth attempt was not cleaned up")
+	}
+	if _, exists := securityMonitor.failedAuthAttempts["new_auth"]; !exists {
+		t.Error("New failed auth attempt was incorrectly removed")
+	}
+
+	if _, exists := securityMonitor.rateLimiters["old_rate"]; exists {
+		t.Error("Old rate limiter was not cleaned up")
+	}
+	if _, exists := securityMonitor.rateLimiters["new_rate"]; !exists {
+		t.Error("New rate limiter was incorrectly removed")
+	}
+
+	if _, exists := securityMonitor.suspiciousIPs["old_ip"]; exists {
+		t.Error("Old IP intelligence was not cleaned up")
+	}
+	if _, exists := securityMonitor.suspiciousIPs["new_ip"]; !exists {
+		t.Error("New IP intelligence was incorrectly removed")
+	}
+}
+
+// TestAnalyzeThreatPatterns verifies the logic for detecting coordinated attacks and rate limit abuse.
+func TestAnalyzeThreatPatterns(t *testing.T) {
+	_, cleanup := setupSecurityTest(t)
+	defer cleanup()
+
+	// Since this function only logs warnings, we can't easily assert its output without
+	// dependency injection for the logger. This test will ensure the function runs
+	// to completion without panicking, which provides execution coverage.
+
+	t.Run("Coordinated Attack Detection", func(t *testing.T) {
+		securityMonitor.mutex.Lock()
+		// Add 11 recent failed auth attempts to trigger the alert
+		for i := 0; i < 11; i++ {
+			ip := fmt.Sprintf("10.0.0.%d", i)
+			securityMonitor.failedAuthAttempts[ip] = &AuthAttempt{
+				LastAttempt: time.Now().Add(-5 * time.Minute),
+				Count:       1,
+			}
+		}
+		securityMonitor.mutex.Unlock()
+		securityMonitor.analyzeThreatPatterns() // Should log a warning
+	})
+
+	t.Run("Multiple Rate Limit Violations", func(t *testing.T) {
+		securityMonitor.mutex.Lock()
+		// Add 6 rate limiters with violations to trigger the alert
+		for i := 0; i < 6; i++ {
+			ip := fmt.Sprintf("11.0.0.%d", i)
+			securityMonitor.rateLimiters[ip] = &RateLimiter{
+				ViolationCount: 1,
+				LastMessage:    time.Now(),
+			}
+		}
+		securityMonitor.mutex.Unlock()
+		securityMonitor.analyzeThreatPatterns() // Should log a warning
+	})
 }
