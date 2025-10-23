@@ -1,7 +1,7 @@
 # Ultra-Secure Whistleblower Communication Server
 ## Complete Deployment Guide for Intelligence Agency Protection
 
-> ⚠️ **CRITICAL SECURITY NOTICE**: This system is designed for protecting intelligence agency whistleblowers and high-value sources. Follow ALL security procedures exactly. Lives may depend on proper deployment and operational security.
+> ⚠️ **CRITICAL SECURITY NOTICE**: THIS PROJECT IS NOT MAINTAINED
 
 ## 📋 Table of Contents
 
